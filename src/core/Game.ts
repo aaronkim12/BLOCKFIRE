@@ -36,7 +36,7 @@ function savedMapChoice(): string | null {
     return null;
   }
 }
-import { DEFAULT_POSE, type CharacterPose } from '../player/CharacterModel';
+import { CharacterModel, DEFAULT_POSE, type CharacterPose } from '../player/CharacterModel';
 import { PlayerController } from '../player/PlayerController';
 import { PracticeDummies } from '../player/PracticeDummies';
 import { HUD } from '../ui/HUD';
@@ -182,6 +182,7 @@ export class Game {
     this.scene.add(this.muzzleLight, this.blindGlow.group);
 
     this.player = new PlayerController(this.map.collision);
+    CharacterModel.ragdollWorld = this.map.collision;
     this.inventory = new WeaponInventory({
       onFire: () => this.onFire(),
       onDryFire: () => this.sound.play('dry_fire', { gain: 0.8 }),
@@ -213,6 +214,8 @@ export class Game {
       },
       onHit: (e) => {
         this.effects.hit(e.point, e.from.clone().sub(e.point).normalize(), e.part === 'head');
+        // 쓰러질 때 맞은 방향으로 넘어지도록
+        (e.target as { model?: CharacterModel }).model?.noteHit?.(e.from, e.point, e.part === 'head');
         if (e.shooter.id === this.local.id) this.damagedAt.set(e.target.id, performance.now());
       },
       onTracer: (from, to, shooter) => {

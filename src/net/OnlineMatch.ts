@@ -134,6 +134,7 @@ export class OnlineMatch {
         const point = new THREE.Vector3(...m.point);
         const from = new THREE.Vector3(...m.from);
         g.effects.hit(point, from.clone().sub(point).normalize(), m.part === 'head');
+        this.remotes.get(m.target)?.model.noteHit(from, point, m.part === 'head');
         if (m.shooter === this.myId) {
           g.hud.showHitmarker(m.part === 'head' ? 'head' : 'body');
           g.hud.addDamageNumber(point, m.damage, m.part);

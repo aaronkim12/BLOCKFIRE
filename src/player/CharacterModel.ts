@@ -6,6 +6,28 @@ import { instantiateWeapon, type WeaponInstance, type WeaponTemplate } from '../
 import type { Capsule } from '../combat/Hitbox';
 import { loadAnimationLibrary, type ClipName, type LoadedClip } from './AnimationLibrary';
 import { aimBone, boneLength, rotateBoneWorld, setWorldQuaternion, solveTwoBone } from './boneMath';
+import type { CollisionWorld } from '../physics/CollisionWorld';
+import { JOINTS, Ragdoll, type Joint } from './Ragdoll';
+
+/** 래그돌 입자 → 뼈 */
+const JOINT_BONE: Record<Joint, BoneKey> = {
+  hips: 'hips', chest: 'chest', head: 'head', headTop: 'headTop',
+  shL: 'upperArmL', elL: 'forearmL', haL: 'handL', shR: 'upperArmR', elR: 'forearmR', haR: 'handR',
+  thL: 'thighL', knL: 'shinL', ftL: 'footL', thR: 'thighR', knR: 'shinR', ftR: 'footR',
+};
+/**
+ * 래그돌이 방향을 정하는 뼈 (부모 먼저): [뼈, 시작 입자, 끝 입자, 비틀림 기준]
+ * 비틀림 기준: 'side' = 어깨/엉덩이 좌우 방향, 'up' = 몸통 위 방향
+ */
+const RAG_BONES: [BoneKey, Joint, Joint, 'side' | 'hipSide' | 'up'][] = [
+  ['hips', 'hips', 'chest', 'hipSide'],
+  ['chest', 'chest', 'head', 'side'],
+  ['neck', 'head', 'headTop', 'side'],
+  ['upperArmL', 'shL', 'elL', 'up'], ['forearmL', 'elL', 'haL', 'up'],
+  ['upperArmR', 'shR', 'elR', 'up'], ['forearmR', 'elR', 'haR', 'up'],
+  ['thighL', 'thL', 'knL', 'hipSide'], ['shinL', 'knL', 'ftL', 'hipSide'],
+  ['thighR', 'thR', 'knR', 'hipSide'], ['shinR', 'knR', 'ftR', 'hipSide'],
+];
 
 /**
  * 사람 캐릭터 모델 (Mixamo Y Bot).
@@ -138,6 +160,14 @@ export class CharacterModel {
   private gaitPhase = 0;
   private airTime = 0;
   private leftIK = 1;
+
+  /** 래그돌이 부딪힐 맵 충돌 (클라이언트에서 Game이 지정) */
+  static ragdollWorld: CollisionWorld | null = null;
+  private ragdoll: Ragdoll | null = null;
+  /** 죽는 순간 (입자 기준 회전)⁻¹ × 뼈 월드 회전 */
+  private ragOffset = new Map<BoneKey, THREE.Quaternion>();
+  /** 마지막으로 맞은 방향 (래그돌이 그쪽으로 넘어짐) */
+  private lastHit: { dir: THREE.Vector3; point: THREE.Vector3; at: number; head: boolean } | null = null;
 
   private constructor(
     body: THREE.Object3D,
@@ -380,6 +410,67 @@ export class CharacterModel {
     idleU.setEffectiveWeight(0);
   }
 
+  // ───────────────────────── 래그돌 ─────────────────────────
+
+  /** 맞음 기록 (쓰러질 때 이 방향으로 날아감) */
+  noteHit(from: THREE.Vector3, point: THREE.Vector3, head = false): void {
+    const dir = point.clone().sub(from).setY(0);
+    if (dir.lengthSq() < 1e-6) return;
+    this.lastHit = { dir: dir.normalize(), point: point.clone(), at: performance.now(), head };
+  }
+
+  private jointPositions(): THREE.Vector3[] {
+    return JOINTS.map((j) => this.bones[JOINT_BONE[j]].getWorldPosition(new THREE.Vector3()));
+  }
+
+  /** 입자 위치로 만든 뼈 방향 기준 회전 */
+  private ragFrame(pts: THREE.Vector3[], a: Joint, b: Joint, ref: 'side' | 'hipSide' | 'up'): THREE.Quaternion {
+    const I = (j: Joint) => pts[JOINTS.indexOf(j)];
+    const x = I(b).clone().sub(I(a)).normalize();
+    const side = I('shR').clone().sub(I('shL'));
+    const hipSide = I('thR').clone().sub(I('thL'));
+    const up = I('chest').clone().sub(I('hips'));
+    const tryRef = (v: THREE.Vector3) => new THREE.Vector3().crossVectors(x, v);
+    let z = tryRef(ref === 'side' ? side : ref === 'hipSide' ? hipSide : up);
+    if (z.lengthSq() < 1e-4) z = tryRef(ref === 'up' ? side : up);
+    if (z.lengthSq() < 1e-8) z = tryRef(new THREE.Vector3(0, 0, 1));
+    z.normalize();
+    const y = new THREE.Vector3().crossVectors(z, x);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  }
+
+  private startRagdoll(F: THREE.Vector3, R: THREE.Vector3): void {
+    this.fall.rotation.x = 0;
+    this.fall.position.y = 0;
+    this.root.updateMatrixWorld(true);
+    const pts = this.jointPositions();
+    this.ragOffset.clear();
+    for (const [bone, a, b, ref] of RAG_BONES) {
+      const f0 = this.ragFrame(pts, a, b, ref);
+      const q0 = this.bones[bone].getWorldQuaternion(new THREE.Quaternion());
+      this.ragOffset.set(bone, f0.invert().multiply(q0));
+    }
+    // 이동 중이던 속도 + 맞은 방향으로 밀기 (최근에 맞은 게 없으면 뒤로 넘어짐)
+    const vel = new THREE.Vector3().addScaledVector(R, this.smoothMove.x).addScaledVector(F, this.smoothMove.y).multiplyScalar(0.8);
+    const hit = this.lastHit && performance.now() - this.lastHit.at < 600 ? this.lastHit : null;
+    const dir = hit ? hit.dir.clone().multiplyScalar(hit.head ? 3.2 : 2.4) : F.clone().multiplyScalar(-1.6);
+    dir.y += 0.6;
+    this.ragdoll = new Ragdoll(pts, vel, { dir, point: hit?.point ?? null }, CharacterModel.ragdollWorld);
+    this.lastHit = null;
+  }
+
+  private applyRagdoll(): void {
+    const rd = this.ragdoll!;
+    const pts = rd.pos;
+    // 엉덩이 위치
+    const hips = this.bones.hips;
+    if (hips.parent) hips.position.copy(hips.parent.worldToLocal(pts[0].clone()));
+    for (const [bone, a, b, ref] of RAG_BONES) {
+      const q = this.ragFrame(pts, a, b, ref).multiply(this.ragOffset.get(bone)!);
+      setWorldQuaternion(this.bones[bone], q);
+    }
+  }
+
   // ───────────────────────── 3인칭 포즈 ─────────────────────────
 
   update(dt: number, pose: CharacterPose): void {
@@ -437,17 +528,15 @@ export class CharacterModel {
     const eq = 1 - pose.equip;
     if (eq > 0) rotateBoneWorld(B.upperArmR, R, -eq * 1.1);
 
-    // ── 사망: 뒤로 넘어짐
+    // ── 사망: 래그돌 (맞은 방향으로 쓰러져 바닥·벽에 부딪힘)
     if (dead) {
-      const t = Math.min(1, pose.dead / 0.6);
-      const e = 1 - Math.pow(1 - t, 3);
-      this.fall.rotation.x = e * (Math.PI / 2 - 0.05);
-      this.fall.position.y = e * 0.12;
+      if (!this.ragdoll) this.startRagdoll(F, R);
+      this.ragdoll!.update(dt);
       if (this.weapon) this.weapon.root.visible = false;
-      this.root.updateMatrixWorld(true);
-      this.poseDeadArms(R);
+      this.applyRagdoll();
       return;
     }
+    this.ragdoll = null;
     this.fall.rotation.x = 0;
     this.fall.position.y = 0;
     if (this.weapon) this.weapon.root.visible = true;
@@ -555,17 +644,6 @@ export class CharacterModel {
       aimBone(B[`thigh${side}`], B[`shin${side}`], thigh);
       aimBone(B[`shin${side}`], B[`foot${side}`], shin);
       aimBone(B[`foot${side}`], B[`toe${side}`], _v1.copy(F).addScaledVector(UP, -0.25).normalize());
-    }
-  }
-
-  private poseDeadArms(R: THREE.Vector3): void {
-    const B = this.bones;
-    // 팔을 몸 옆으로 늘어뜨림
-    const back = new THREE.Vector3(0, 0, 1).applyQuaternion(this.root.quaternion);
-    for (const side of ['L', 'R'] as const) {
-      const s = side === 'L' ? -1 : 1;
-      const dir = back.clone().multiplyScalar(0.4).addScaledVector(R, s * 0.9).addScaledVector(UP, -0.2).normalize();
-      aimBone(B[`upperArm${side}`], B[`forearm${side}`], dir);
     }
   }
 
