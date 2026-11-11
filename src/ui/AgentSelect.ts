@@ -3,6 +3,8 @@ import { DIFFICULTY_LABEL, type BotDifficulty } from '../ai/botConfig';
 import { MATCH_MODES, withMode, type MatchMode } from '../rounds/matchConfig';
 import type { Game } from '../core/Game';
 import { AgentPreview } from './AgentPreview';
+import type { NetClient } from '../net/NetClient';
+import type { RoomInfo } from '../net/protocol';
 import { effectIcon, roleIcon } from './icons';
 
 const SLOT_LABEL: Record<AbilitySlot, string> = { ability1: '기본', ability2: '기본', signature: '고유', ultimate: '궁극기' };
@@ -23,6 +25,12 @@ export class AgentSelect {
   private onConfirm: (() => void) | null = null;
   private preview = new AgentPreview();
   private locking = false;
+  /** 온라인 캐릭터 선택 (서버가 확정·시간 관리) */
+  private net: NetClient | null = null;
+  private room: RoomInfo | null = null;
+  /** 선택 마감 시각 (내 시계, ms) */
+  private selectEnds = 0;
+  private clock = 0;
 
   constructor(container: HTMLElement, private game: Game) {
     this.selected = game.agentId;
@@ -41,7 +49,7 @@ export class AgentSelect {
   }
 
   private onClick(e: Event): void {
-    if (this.locking) return;
+    if (this.locking || this.myLocked) return;
     const t = e.target as HTMLElement;
     const card = t.closest<HTMLElement>('[data-agent]');
     if (card) this.select(card.dataset.agent!);
@@ -85,6 +93,60 @@ export class AgentSelect {
   hide(): void {
     this.root.hidden = true;
     this.preview.stop();
+    this.net = null;
+    this.room = null;
+    clearInterval(this.clock);
+  }
+
+  get isOpen(): boolean {
+    return !this.root.hidden;
+  }
+
+  /** 온라인: 경기 시작 전 캐릭터 선택 (모두 LOCK IN 하거나 시간이 끝나면 서버가 경기를 시작) */
+  showOnline(net: NetClient, room: RoomInfo): void {
+    this.net = net;
+    this.onConfirm = null;
+    this.root.dataset.title = 'ONLINE · 캐릭터 선택';
+    this.root.hidden = false;
+    this.locking = false;
+    this.root.classList.remove('locking');
+    this.room = room;
+    const me = room.players.find((p) => p.id === net.id);
+    this.selected = me?.agent ?? this.game.agentId;
+    this.selectEnds = Date.now() + room.selectLeft * 1000;
+    this.render();
+    this.preview.start();
+    clearInterval(this.clock);
+    this.clock = window.setInterval(() => this.renderTimer(), 250);
+  }
+
+  /** 온라인: 방 정보가 바뀜 (팀원 선택·확정) */
+  updateRoom(room: RoomInfo): void {
+    if (!this.net) return;
+    this.room = room;
+    this.selectEnds = Date.now() + room.selectLeft * 1000;
+    const me = room.players.find((p) => p.id === this.net!.id);
+    // 서버가 받아들인 내 캐릭터 (거절되면 되돌아감)
+    if (me && me.agent !== this.selected) this.selected = me.agent;
+    this.render();
+  }
+
+  private get myLocked(): boolean {
+    return !!this.room?.players.find((p) => p.id === this.net?.id)?.locked;
+  }
+
+  /** 같은 팀의 다른 사람이 고른 캐릭터 → 이름 */
+  private takenBy(): Map<string, { name: string; locked: boolean }> {
+    const out = new Map<string, { name: string; locked: boolean }>();
+    const me = this.room?.players.find((p) => p.id === this.net?.id);
+    if (!me) return out;
+    for (const p of this.room!.players) if (p.id !== me.id && p.team === me.team) out.set(p.agent, { name: p.name, locked: p.locked });
+    return out;
+  }
+
+  private renderTimer(): void {
+    const el = this.root.querySelector('.as-timer');
+    if (el) el.textContent = String(Math.max(0, Math.ceil((this.selectEnds - Date.now()) / 1000)));
   }
 
   private get agent(): AgentDef {
@@ -93,6 +155,11 @@ export class AgentSelect {
 
   private select(id: string): void {
     if (id === this.selected) return;
+    if (this.net) {
+      // 같은 팀이 이미 고른 캐릭터는 고를 수 없다
+      if (this.takenBy().has(id)) return;
+      this.net.send({ t: 'agent', agent: id });
+    }
     this.selected = id;
     this.focusSlot = 'signature';
     this.render();
@@ -100,6 +167,16 @@ export class AgentSelect {
 
   /** LOCK IN: 대표 색으로 잠깐 번쩍인 뒤 시작 */
   private lock(): void {
+    if (this.net) {
+      // 온라인: 서버에 확정. 모두 확정하면 서버가 경기를 시작한다
+      if (this.myLocked) return;
+      this.game.agentId = this.selected;
+      this.net.send({ t: 'lock' });
+      this.root.classList.add('locking');
+      this.game.sound.play('ui', { gain: 0.8 });
+      setTimeout(() => this.root.classList.remove('locking'), 380);
+      return;
+    }
     this.locking = true;
     this.game.agentId = this.selected;
     this.root.classList.add('locking');
@@ -116,6 +193,9 @@ export class AgentSelect {
     const a = this.agent;
     this.root.style.setProperty('--agent', a.color);
     const isMatch = this.root.dataset.title?.startsWith('MATCH');
+    const online = !!this.net;
+    const taken = this.takenBy();
+    const locked = this.myLocked;
     this.root.innerHTML = `
       <div class="as-bg"><span>${a.name}</span></div>
       <header class="as-top">
@@ -133,15 +213,17 @@ export class AgentSelect {
         <div class="as-roster">
           ${AGENTS.map((g) => {
             const dim = this.role !== 'all' && g.roleClass !== this.role;
-            return `<button class="as-tile ${g.id === this.selected ? 'active' : ''} ${dim ? 'dim' : ''}" data-agent="${g.id}" style="--c:${g.color}" title="${g.name}">
-              <i>${roleIcon(g.roleClass, 13)}</i><b>${g.name[0]}</b><span>${g.name}</span></button>`;
+            const by = taken.get(g.id);
+            return `<button class="as-tile ${g.id === this.selected ? 'active' : ''} ${dim ? 'dim' : ''} ${by ? 'taken' : ''}" data-agent="${g.id}" style="--c:${g.color}" title="${by ? `${by.name} 선택` : g.name}" ${by ? 'disabled' : ''}>
+              <i>${roleIcon(g.roleClass, 13)}</i><b>${g.name[0]}</b><span>${by ? by.name : g.name}</span></button>`;
           }).join('')}
         </div>
         <div class="as-actions">
-          ${isMatch ? '<div class="as-diff as-mode"></div><div class="as-diff as-bots"></div>' : ''}
+          ${isMatch ? '<div class="as-diff as-matchmode"></div><div class="as-diff as-bots"></div>' : ''}
+          ${online ? this.teamHtml() : ''}
           <div class="row">
-            <button data-act="cancel">BACK</button>
-            <button data-act="lock" class="primary">LOCK IN</button>
+            ${online ? '' : '<button data-act="cancel">BACK</button>'}
+            <button data-act="lock" class="primary" ${locked ? 'disabled' : ''}>${locked ? '다른 플레이어를 기다리는 중…' : 'LOCK IN'}</button>
           </div>
         </div>
       </footer>`;
@@ -187,8 +269,23 @@ export class AgentSelect {
       </div>`;
   }
 
+  /** 온라인: 우리 팀 선택 현황 + 남은 시간 */
+  private teamHtml(): string {
+    const room = this.room;
+    const me = room?.players.find((p) => p.id === this.net?.id);
+    if (!room || !me) return '';
+    const rows = room.players
+      .filter((p) => p.team === me.team)
+      .map((p) => {
+        const a = AGENTS.find((x) => x.id === p.agent)!;
+        return `<li class="${p.locked ? 'locked' : ''} ${p.id === me.id ? 'me' : ''}" style="--c:${a.color}"><b>${p.name}</b><span>${a.name}</span><em>${p.locked ? 'LOCKED' : '선택 중'}</em></li>`;
+      })
+      .join('');
+    return `<div class="as-team"><div class="as-team-head"><span>TEAM ${me.team}</span><b class="as-timer">${room.selectLeft}</b></div><ul>${rows}</ul></div>`;
+  }
+
   private renderFooter(): void {
-    const modeRow = this.root.querySelector('.as-mode');
+    const modeRow = this.root.querySelector('.as-matchmode');
     if (modeRow)
       modeRow.innerHTML = `<span>MATCH</span>${(Object.keys(MATCH_MODES) as MatchMode[])
         .map((m) => `<button data-mode="${m}" class="${m === this.game.matchMode ? 'active' : ''}" title="${MATCH_MODES[m].desc}">${MATCH_MODES[m].label}</button>`)

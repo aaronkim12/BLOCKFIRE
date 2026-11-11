@@ -29,7 +29,7 @@ export class LoadingScreen {
     this.root.innerHTML = `
       <div class="ls-center">
         <div class="ls-cube"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <h1 class="logo">BLOCK<span>FIRE</span></h1>
+        <h1 class="logo">BLOCK<span>FIRE</span><sup class="beta">BETA</sup></h1>
         <div class="ls-bar"></div>
         <div class="ls-row"><span class="ls-file">준비 중</span><span class="ls-pct">0%</span></div>
       </div>

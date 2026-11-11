@@ -53,7 +53,7 @@ export class Menu {
     this.root.className = 'menu-layer';
     this.root.innerHTML = `
       <div class="menu main-menu">
-        <h1 class="logo">BLOCK<span>FIRE</span></h1>
+        <h1 class="logo">BLOCK<span>FIRE</span><sup class="beta">BETA</sup></h1>
         <p class="tagline">TACTICAL // RETRO // 5v5</p>
         <nav>
           <button data-act="play">PLAY <small>온라인 5대5</small></button>
@@ -62,6 +62,7 @@ export class Menu {
           <button data-act="collection" disabled title="Phase 6 이후 구현 예정">COLLECTION <small>준비 중</small></button>
           <button data-act="settings">SETTINGS</button>
         </nav>
+        <a class="feedback-link" href="https://forms.gle/xcjLgypmjX18rDAN7" target="_blank" rel="noopener noreferrer">💬 추가했으면 하는 기능 알려주기 <small>설문 참여</small></a>
         <p class="build">BUILD 0.8 · PHASE 8 · MAP: ${game.map.def.name}</p>
       </div>
       <div class="menu pause-menu">

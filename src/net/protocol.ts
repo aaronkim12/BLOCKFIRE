@@ -25,10 +25,20 @@ export interface LobbyPlayer {
   team: TeamId;
   agent: string;
   host: boolean;
+  /** 캐릭터 선택 단계에서 LOCK IN 했는지 */
+  locked: boolean;
 }
+
+/** 대기실 → 캐릭터 선택 → 경기 */
+export type RoomPhase = 'lobby' | 'select' | 'match';
+/** 캐릭터 선택 제한 시간 (초) */
+export const SELECT_TIME = 40;
 
 export interface RoomInfo {
   code: string;
+  phase: RoomPhase;
+  /** 캐릭터 선택 남은 시간 (초, 선택 단계일 때) */
+  selectLeft: number;
   mode: import('../rounds/matchConfig').MatchMode;
   players: LobbyPlayer[];
   inMatch: boolean;
@@ -104,6 +114,8 @@ export type ClientMsg =
   | { t: 'leave' }
   | { t: 'team'; team: TeamId }
   | { t: 'agent'; agent: string }
+  /** 캐릭터 선택 확정 */
+  | { t: 'lock' }
   | { t: 'start' }
   /** 방장: 경기 방식 */
   | { t: 'mode'; mode: import('../rounds/matchConfig').MatchMode }

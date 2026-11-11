@@ -1,6 +1,6 @@
 import { WebSocketServer, type WebSocket } from 'ws';
 import { AGENTS } from '../src/abilities/abilityData';
-import { NET_PORT, SERVER_TICK, TEAM_SIZE, type ClientMsg, type LobbyPlayer, type RoomInfo, type ServerMsg } from '../src/net/protocol';
+import { NET_PORT, SELECT_TIME, SERVER_TICK, TEAM_SIZE, type RoomPhase, type ClientMsg, type LobbyPlayer, type RoomInfo, type ServerMsg } from '../src/net/protocol';
 import { DEFAULT_MATCH, MATCH_MODES, withMode, type MatchConfig, type MatchMode } from '../src/rounds/matchConfig';
 import type { TeamId } from '../src/rounds/RoundManager';
 import { ServerMatch } from './ServerMatch';
@@ -30,6 +30,13 @@ class Room {
   ending = false;
   /** 경기 방식 (방장이 고름) */
   mode: MatchMode = 'standard';
+  /** 대기실 → 캐릭터 선택 → 경기 */
+  selecting = false;
+  /** 캐릭터 선택 마감 시각 (ms) */
+  selectEnds = 0;
+  get phase(): RoomPhase {
+    return this.match ? 'match' : this.selecting ? 'select' : 'lobby';
+  }
   get config(): MatchConfig {
     // FAST(테스트 서버)는 짧은 시간 설정을 그대로 쓴다
     return process.env.FAST ? { ...DEFAULT_MATCH } : withMode({ ...DEFAULT_MATCH }, this.mode);
@@ -38,7 +45,8 @@ class Room {
   constructor(readonly code: string) {}
 
   info(): RoomInfo {
-    return { code: this.code, mode: this.mode, players: this.players, inMatch: !!this.match };
+    const selectLeft = this.selecting ? Math.max(0, Math.ceil((this.selectEnds - Date.now()) / 1000)) : 0;
+    return { code: this.code, phase: this.phase, selectLeft, mode: this.mode, players: this.players, inMatch: !!this.match };
   }
 
   broadcast(msg: ServerMsg): void {
@@ -83,12 +91,12 @@ function freeAgent(room: Room, team: TeamId, prefer?: string): string {
 }
 
 function joinRoom(c: Client, room: Room): void {
-  if (room.match) return send(c, { t: 'error', msg: '이미 경기 중인 방입니다' });
+  if (room.match || room.selecting) return send(c, { t: 'error', msg: '이미 경기를 시작한 방입니다' });
   const team = openTeam(room);
   if (!team) return send(c, { t: 'error', msg: '방이 가득 찼습니다 (5대5)' });
   leaveRoom(c);
   c.room = room;
-  room.players.push({ id: c.id, name: c.name, team, agent: freeAgent(room, team), host: room.players.length === 0 });
+  room.players.push({ id: c.id, name: c.name, team, agent: freeAgent(room, team), host: room.players.length === 0, locked: false });
   room.sendRoom();
 }
 
@@ -105,7 +113,11 @@ function leaveRoom(c: Client): void {
   room.match?.removePlayer(c.id);
   send(c, { t: 'room', room: null });
   if (room.players.length === 0) rooms.delete(room.code);
-  else room.sendRoom();
+  else {
+    room.sendRoom();
+    // 나간 사람만 기다리던 중이었으면 바로 시작
+    if (room.selecting) checkSelect(room);
+  }
 }
 
 function handle(c: Client, m: ClientMsg): void {
@@ -140,6 +152,7 @@ function handle(c: Client, m: ClientMsg): void {
   }
   switch (m.t) {
     case 'team': {
+      if (room.selecting) return;
       if (me.team === m.team || room.players.filter((p) => p.team === m.team).length >= TEAM_SIZE) return;
       me.team = m.team;
       me.agent = freeAgent(room, m.team, me.agent);
@@ -147,22 +160,52 @@ function handle(c: Client, m: ClientMsg): void {
       return;
     }
     case 'agent': {
-      if (!AGENTS.some((a) => a.id === m.agent)) return;
+      if (me.locked || !AGENTS.some((a) => a.id === m.agent)) return;
       if (room.players.some((p) => p.team === me.team && p.agent === m.agent && p.id !== me.id)) return send(c, { t: 'error', msg: '같은 팀에서 이미 고른 캐릭터입니다' });
       me.agent = m.agent;
       room.sendRoom();
       return;
     }
+    case 'lock': {
+      if (!room.selecting || me.locked) return;
+      // 고른 캐릭터를 같은 팀이 먼저 확정했으면 거절
+      if (room.players.some((p) => p.team === me.team && p.agent === me.agent && p.id !== me.id && p.locked))
+        return send(c, { t: 'error', msg: '같은 팀에서 이미 확정한 캐릭터입니다' });
+      me.locked = true;
+      room.sendRoom();
+      checkSelect(room);
+      return;
+    }
     case 'mode':
-      if (!me.host || !(m.mode in MATCH_MODES)) return;
+      if (room.selecting || !me.host || !(m.mode in MATCH_MODES)) return;
       room.mode = m.mode;
       room.sendRoom();
       return;
     case 'start':
-      if (!me.host) return;
-      startMatch(room);
+      if (!me.host || room.selecting) return;
+      // 캐릭터 선택 단계로
+      room.selecting = true;
+      room.selectEnds = Date.now() + (process.env.FAST ? 15 : SELECT_TIME) * 1000;
+      for (const p of room.players) p.locked = false;
+      room.sendRoom();
       return;
   }
+}
+
+/** 모두 확정했거나 시간이 끝나면 경기 시작 (시간이 끝나면 지금 고른 캐릭터로) */
+function checkSelect(room: Room): void {
+  if (!room.selecting || room.players.length === 0) return;
+  const allLocked = room.players.every((p) => p.locked);
+  if (!allLocked && Date.now() < room.selectEnds) return;
+  // 같은 팀 중복 정리 (확정하지 않은 사람이 비어 있는 캐릭터로)
+  for (const p of room.players) {
+    if (room.players.some((o) => o.id !== p.id && o.team === p.team && o.agent === p.agent && (o.locked || room.players.indexOf(o) < room.players.indexOf(p)))) {
+      p.agent = freeAgent(room, p.team);
+    }
+    p.locked = true;
+  }
+  room.selecting = false;
+  startMatch(room);
 }
 
 function startMatch(room: Room): void {
@@ -186,6 +229,7 @@ setInterval(() => {
   last += steps * DT * 1000;
   if (steps === 0) return;
   for (const room of rooms.values()) {
+    if (room.selecting) checkSelect(room);
     const m = room.match;
     if (!m) continue;
     for (let i = 0; i < steps; i++) m.update(DT);
@@ -196,6 +240,7 @@ setInterval(() => {
       setTimeout(() => {
         room.match = null;
         room.ending = false;
+        for (const p of room.players) p.locked = false;
         room.sendRoom();
       }, 8000);
     }

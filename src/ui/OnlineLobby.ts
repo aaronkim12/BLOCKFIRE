@@ -1,9 +1,7 @@
-import { AGENTS, ROLE_LABEL } from '../abilities/abilityData';
 import type { Game } from '../core/Game';
 import { NetClient } from '../net/NetClient';
 import { TEAM_SIZE, type RoomInfo, type ServerMsg } from '../net/protocol';
 import type { TeamId } from '../rounds/RoundManager';
-import { roleIcon } from './icons';
 import { MATCH_MODES, type MatchMode } from '../rounds/matchConfig';
 
 /**
@@ -118,9 +116,22 @@ export class OnlineLobby {
     if (m.t === 'error') this.status(m.msg, true);
     if (m.t === 'start') {
       this.hide();
+      this.game.agentSelect.hide();
       this.game.startOnline(this.net, m.config);
     }
     if (m.t === 'room') {
+      // 방장이 시작 → 캐릭터 선택 화면
+      if (m.room?.phase === 'select') {
+        this.root.hidden = true;
+        if (!this.game.agentSelect.isOpen) this.game.agentSelect.showOnline(this.net, m.room);
+        else this.game.agentSelect.updateRoom(m.room);
+        return;
+      }
+      if (this.game.agentSelect.isOpen && this.game.mode !== 'online' && m.room?.phase !== 'match') {
+        // 선택이 취소되면 (서버 연결 끊김 등) 대기실로
+        this.game.agentSelect.hide();
+        this.root.hidden = false;
+      }
       // 경기가 끝나 대기실로 돌아옴
       if (this.game.mode === 'online' && (!m.room || !m.room.inMatch)) {
         this.game.endOnline();
@@ -167,21 +178,13 @@ export class OnlineLobby {
     const team = (t: TeamId) => {
       const list = room.players.filter((p) => p.team === t);
       const rows = list
-        .map((p) => {
-          const a = AGENTS.find((x) => x.id === p.agent)!;
-          return `<li class="${p.id === this.net.id ? 'me' : ''}" style="--agent:${a.color}"><b>${escapeHtml(p.name)}</b>${p.host ? '<em>HOST</em>' : ''}<span>${a.name}</span></li>`;
-        })
+        .map((p) => `<li class="${p.id === this.net.id ? 'me' : ''}"><b>${escapeHtml(p.name)}</b>${p.host ? '<em>HOST</em>' : ''}</li>`)
         .join('');
       const empty = Array.from({ length: TEAM_SIZE - list.length }, () => '<li class="empty">빈 자리</li>').join('');
       const canJoin = me && me.team !== t && list.length < TEAM_SIZE;
       return `<div class="ol-team team-${t}"><h3>TEAM ${t} <small>${list.length}/${TEAM_SIZE}</small></h3><ul>${rows}${empty}</ul>
         ${canJoin ? `<button data-act="team" data-team="${t}">이 팀으로</button>` : ''}</div>`;
     };
-    const taken = new Set(room.players.filter((p) => me && p.team === me.team && p.id !== me.id).map((p) => p.agent));
-    const agents = AGENTS.map(
-      (a) => `<button data-act="agent" data-agent="${a.id}" class="ol-agent ${me?.agent === a.id ? 'active' : ''}" ${taken.has(a.id) ? 'disabled' : ''} style="--agent:${a.color}">
-        ${roleIcon(a.roleClass, 14)}<b>${a.name}</b><small>${ROLE_LABEL[a.roleClass]}</small></button>`,
-    ).join('');
     return `
       <div class="ol-panel wide">
         <h2>ROOM <span class="ol-code">${room.code}</span> <small>${room.inMatch ? '경기 중' : '대기 중'}</small></h2>
@@ -190,8 +193,7 @@ export class OnlineLobby {
         <div class="ol-modes">${(Object.keys(MATCH_MODES) as MatchMode[])
           .map((m) => `<button data-act="mode" data-mode="${m}" class="${room.mode === m ? 'active' : ''}" ${me?.host ? '' : 'disabled'}><b>${MATCH_MODES[m].label}</b><small>${MATCH_MODES[m].desc}</small></button>`)
           .join('')}</div>
-        <h3>캐릭터</h3>
-        <div class="ol-agents">${agents}</div>
+        <p class="ol-hint">경기를 시작하면 캐릭터 선택 화면에서 캐릭터를 고릅니다 (같은 팀 중복 불가).</p>
         <p class="ol-status">${escapeHtml(this.net.lastError)}</p>
         <nav class="ol-row">
           <button data-act="leave">방 나가기</button>
