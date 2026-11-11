@@ -128,6 +128,9 @@ interface Orbital {
   blocker: (p: THREE.Vector3, r: number, d: number) => void;
 }
 
+/** 드론이 떠 있는 높이 (바닥 위 m) */
+export const DRONE_HOVER = 1.2;
+
 const _v = new THREE.Vector3();
 const _w = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -346,7 +349,6 @@ export class AdvancedEffects {
     mesh.add(core, rotor);
     mesh.position.copy(from);
     // 조종 중에는 내 화면에 드론 몸이 보이지 않게
-    if (pilot) mesh.visible = false;
     this.group.add(mesh);
     const pos = from.clone();
     const d = {} as Drone;
@@ -585,7 +587,7 @@ export class AdvancedEffects {
         d.dir.set(0, 0, -1).applyEuler(new THREE.Euler(d.pilot!.pitch(), d.pilot!.yaw(), 0, 'YXZ'));
         d.vy = 0;
       } else if (d.pilot) {
-        // 조종: 마우스 방향, 이동 키로 앞뒤·옆, 점프로 솟음
+        // 조종: 마우스 방향, 이동 키로 앞뒤·옆 (높이는 저절로 유지)
         const yaw = d.pilot.yaw();
         const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
         const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
@@ -594,7 +596,6 @@ export class AdvancedEffects {
         if (vel.lengthSq() > 1) vel.normalize();
         vel.multiplyScalar(speed);
         d.dir.set(0, 0, -1).applyEuler(new THREE.Euler(d.pilot.pitch(), yaw, 0, 'YXZ'));
-        if (mv.jump && d.pos.y < this.ground(d.pos).y + 1) d.vy = 5;
         for (const axis of ['x', 'z'] as const) {
           const step = vel[axis] * dt;
           if (Math.abs(step) < 1e-5) continue;
@@ -603,20 +604,16 @@ export class AdvancedEffects {
           if (!this.world.raycast(d.pos.x, d.pos.y, d.pos.z, dx, 0, dz, Math.abs(step) + 0.3)) d.pos[axis] += step;
         }
       } else {
+        // 봇 드론: 수평으로 곧게 (벽에 막히면 멈춤)
         const step = speed * dt;
-        const hit = this.world.raycast(d.pos.x, d.pos.y, d.pos.z, d.dir.x, d.dir.y, d.dir.z, step + 0.3);
-        if (hit) d.dir.y = 0;
-        else d.pos.addScaledVector(d.dir, step);
+        const flat = new THREE.Vector3(d.dir.x, 0, d.dir.z).normalize();
+        if (!this.world.raycast(d.pos.x, d.pos.y, d.pos.z, flat.x, 0, flat.z, step + 0.3)) d.pos.addScaledVector(flat, step);
       }
-      // 바닥 위 0.6m를 떠다닌다 (점프하면 잠시 솟음)
+      // 중력 없이 바닥 위 일정 높이를 유지한다 (계단·상자 위로는 부드럽게 따라 오르내림)
       if (!remote) {
-        const floor = this.ground(d.pos).y + 0.6;
-        d.vy -= 12 * dt;
-        d.pos.y += d.vy * dt;
-        if (d.pos.y < floor) {
-          d.pos.y = floor;
-          d.vy = 0;
-        }
+        const want = this.ground(d.pos.clone().setY(d.pos.y + 0.5)).y + DRONE_HOVER;
+        d.pos.y += (want - d.pos.y) * Math.min(1, dt * 8);
+        d.vy = 0;
       }
       d.mesh.position.copy(d.pos);
       d.mesh.rotation.y += dt * 12;

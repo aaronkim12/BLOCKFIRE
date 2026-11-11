@@ -17,12 +17,25 @@ import type { Drone, DronePilot } from '../abilities/AdvancedEffects';
 import { BotManager } from '../ai/BotManager';
 import type { NetClient } from '../net/NetClient';
 import { OnlineMatch } from '../net/OnlineMatch';
+import { BlindGlow } from '../effects/BlindGlow';
+import { THROW_RELEASE } from '../effects/AbilityHand';
 import type { BotDifficulty } from '../ai/botConfig';
 import { PSXRenderer } from '../graphics/PSXRenderer';
 import { DEFAULT_MATCH, type MatchConfig } from '../rounds/matchConfig';
 import { MatchController } from '../rounds/MatchController';
 import { MapBuilder, type BuiltMap } from '../maps/MapBuilder';
 import type { MapDefinition } from '../maps/MapData';
+import { getMap, MAPS, RANDOM_MAP, resolveMap } from '../maps';
+
+/** 지난번에 고른 맵 (없거나 사라진 맵이면 null) */
+function savedMapChoice(): string | null {
+  try {
+    const v = localStorage.getItem('blockfire.map');
+    return v && (v === RANDOM_MAP || MAPS.some((m) => m.id === v)) ? v : null;
+  } catch {
+    return null;
+  }
+}
 import { DEFAULT_POSE, type CharacterPose } from '../player/CharacterModel';
 import { PlayerController } from '../player/PlayerController';
 import { PracticeDummies } from '../player/PracticeDummies';
@@ -46,7 +59,7 @@ export class Game {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly player: PlayerController;
-  readonly map: BuiltMap;
+  map: BuiltMap;
   readonly inventory: WeaponInventory;
   readonly viewModel = new ViewModel();
   practice: PracticeDummies | null = null;
@@ -91,6 +104,8 @@ export class Game {
   matchConfig: MatchConfig = { ...DEFAULT_MATCH };
   private container: HTMLElement;
   private shakeAmount = 0;
+  /** 연습·봇 경기에서 고른 맵 (맵 id 또는 'random') */
+  mapChoice: string;
 
   private accumulator = 0;
   private lastTime = performance.now();
@@ -125,6 +140,12 @@ export class Game {
   private damagedAt = new Map<string, number>();
   /** 투척 단검 우클릭 연속 투척 중 (처치해도 다시 채워지지 않음) */
   private stormFanning = false;
+  /** 섬광에 눈이 먼 캐릭터의 얼굴 빛 */
+  private blindGlow = new BlindGlow();
+  /** 던지는 동작 중: 손을 떠나는 시점에 발동 */
+  private pendingThrow: { slot: AbilitySlot; variant: 0 | 1; t: number } | null = null;
+  /** 막 던진 능력 (좌클릭을 누르고 있는 동안 휘게 조종) */
+  private steerSlot: AbilitySlot | null = null;
   /** 꺼내 든 능력을 클릭으로 쓴 뒤, 버튼을 뗄 때까지 사격하지 않음 */
   private holdFire = false;
   private sunDir: THREE.Vector3;
@@ -157,7 +178,8 @@ export class Game {
     this.fog = new THREE.Fog(env.fogColor, env.fogNear, env.fogFar);
     this.scene.fog = this.fog;
     this.sunDir = new THREE.Vector3(...env.sunDirection).normalize();
-    this.scene.add(this.muzzleLight);
+    this.mapChoice = savedMapChoice() ?? RANDOM_MAP;
+    this.scene.add(this.muzzleLight, this.blindGlow.group);
 
     this.player = new PlayerController(this.map.collision);
     this.inventory = new WeaponInventory({
@@ -241,7 +263,7 @@ export class Game {
       pilotDrone: () => this.makePilot(),
       armable: true,
       requestTargets: (req, cb) => this.openTacticalMap(req, cb),
-      held: (slot) => this.input.isDown(slot),
+      held: (slot) => this.input.isDown(slot) || (this.steerSlot === slot && this.input.isDown('fire')),
       onUse: (slot, info) => this.sendCast(slot, info),
       moveDir: () => this.moveDir(),
       onCast: (_d, kind) => {
@@ -342,9 +364,42 @@ export class Game {
 
   // ───────────────────────── 상태 전환 ─────────────────────────
 
+  /**
+   * 맵 교체 (연습·경기 시작 전). 충돌 세계는 같은 객체를 비우고 다시 채우므로
+   * 플레이어·사격·능력·소리가 들고 있는 참조가 그대로 유효하다.
+   */
+  setMap(def: MapDefinition): void {
+    if (this.map.def.id === def.id) return;
+    this.abilityFx.clear();
+    this.scene.remove(this.map.root);
+    this.map.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+      const mats = m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : [];
+      for (const mat of mats) mat.dispose();
+    });
+    this.map = new MapBuilder(def, this.map.collision).build();
+    this.scene.add(this.map.root);
+    this.sky = this.map.root.getObjectByName('sky');
+    const env = def.environment;
+    (this.scene.background as THREE.Color).set(env.fogColor);
+    this.fog.color.set(env.fogColor);
+    this.sunDir.set(...env.sunDirection).normalize();
+    this.applySettings();
+    this.bots?.setMap();
+    this.practice?.layout(def);
+    this.menu.refresh();
+  }
+
+  /** 연습·봇 경기: 고른 맵으로 (무작위면 매번 새로 뽑음) */
+  private applyMapChoice(): void {
+    this.setMap(resolveMap(this.mapChoice, this.map.def.id));
+  }
+
   startPractice(): void {
     if (this.state === 'loading') return;
     this.endMatch();
+    this.applyMapChoice();
     this.mode = 'practice';
     this.sound.unlock();
     this.abilities.setAgent(this.agentId);
@@ -373,6 +428,7 @@ export class Game {
 
   private beginMatch(): void {
     this.endMatch();
+    this.applyMapChoice();
     this.mode = 'match';
     this.sound.unlock();
     this.inventory.infiniteAmmo = false;
@@ -385,9 +441,11 @@ export class Game {
   }
 
   /** 온라인 경기 시작 (서버가 start를 보냈을 때) */
-  startOnline(net: NetClient, config: import('../rounds/matchConfig').MatchConfig): void {
+  startOnline(net: NetClient, config: import('../rounds/matchConfig').MatchConfig, mapId?: string): void {
     if (this.state === 'loading') return;
     this.endMatch();
+    // 맵은 서버가 정한다
+    this.setMap(getMap(mapId ?? 'foundry'));
     this.net = net;
     this.mode = 'online';
     this.sound.unlock();
@@ -449,6 +507,18 @@ export class Game {
     if (document.pointerLockElement) document.exitPointerLock();
     this.endMatch();
     this.setState('menu');
+  }
+
+  /** 눈이 먼 다른 캐릭터(봇·더미·온라인 상대)의 얼굴을 빛나게 */
+  private updateBlindGlow(dt: number): void {
+    const list: { id: string; eye: THREE.Vector3; left: number }[] = [];
+    for (const t of this.combat.targets as (import('../abilities/AbilityEffects').FacingTarget & { enabled?: boolean; model?: { root: THREE.Object3D } })[]) {
+      if (!t.alive || t.id === this.local.id || !t.eyePos) continue;
+      if (t.enabled === false || (t.model && !t.model.root.visible)) continue;
+      const left = this.abilityFx.blindLeft(t.id);
+      if (left > 0) list.push({ id: t.id, eye: t.eyePos(new THREE.Vector3()), left });
+    }
+    this.blindGlow.update(dt, this.camera, list);
   }
 
   resetAccumulator(): void {
@@ -663,7 +733,10 @@ export class Game {
     this.sound.setListener(this.camera, dt);
 
     if (this.sky) this.sky.position.copy(this.camera.position);
-    if (this.state === 'playing' || this.state === 'paused') this.effects.update(this.state === 'paused' ? 0 : dt, this.camera);
+    if (this.state === 'playing' || this.state === 'paused') {
+      this.effects.update(this.state === 'paused' ? 0 : dt, this.camera);
+      this.updateBlindGlow(this.state === 'paused' ? 0 : dt);
+    }
     const showViewModel = (this.state === 'playing' || this.state === 'paused') && this.local.alive && !this.piloting;
     // 드론 시점: 화면을 드론 카메라처럼
     document.body.classList.toggle('drone-view', !!this.piloting);
@@ -771,9 +844,14 @@ export class Game {
       this.camera.rotation.z = t * 0.6;
     }
     if (this.piloting && alive) {
-      // 드론 시점
-      this.camera.position.copy(this.piloting.pos);
-      this.camera.rotation.set(p.pitch, p.yaw, 0);
+      // 드론 3인칭: 드론 뒤쪽 위에서 드론을 바라본다 (벽에 막히면 그만큼 가까이)
+      const d = this.piloting.pos;
+      const back = new THREE.Vector3(0, 0, 1).applyEuler(new THREE.Euler(p.pitch * 0.6 - 0.25, p.yaw, 0, 'YXZ'));
+      let dist = 2.8;
+      const hit = this.map.collision.raycast(d.x, d.y, d.z, back.x, back.y, back.z, dist + 0.3);
+      if (hit) dist = Math.max(0.6, hit.distance - 0.3);
+      this.camera.position.copy(d).addScaledVector(back, dist);
+      this.camera.rotation.set(p.pitch * 0.6 - 0.25, p.yaw, 0);
     } else if (this.match?.spectate(this.camera, dt, this.input.wasPressed('fire'), this.input.wasPressed('aim'))) {
       // 관전 카메라가 위치/방향을 정함
     } else this.camera.position.copy(eye);
@@ -848,17 +926,34 @@ export class Game {
     if (this.tacMap.isOpen && ab.targeting && !alive && !ab.usableWhileDead(ab.targeting)) this.tacMap.cancel();
     if (this.match?.weaponsLocked) return;
     // 꺼내 든 능력: 좌클릭/우클릭으로 사용. 무기를 바꾸면 집어넣음
-    if (ab.armed && alive) {
-      const i = this.input;
-      if (i.wasPressed('fire')) {
-        ab.fireArmed(0);
-        this.holdFire = true;
-      } else if (i.wasPressed('aim')) {
-        ab.fireArmed(1);
-        this.holdFire = true;
+    // 손에 드는 능력은 던지는 동작(THROW_RELEASE초) 끝에 손을 떠난다
+    const hand = this.viewModel.abilityHand;
+    if (this.pendingThrow) {
+      const pt = this.pendingThrow;
+      pt.t -= dt;
+      if (!alive || ab.armed !== pt.slot) this.pendingThrow = null;
+      else if (pt.t <= 0) {
+        this.pendingThrow = null;
+        ab.fireArmed(pt.variant);
+        this.steerSlot = pt.slot;
       }
-      else if (i.wasPressed('slot1') || i.wasPressed('slot2') || i.wasPressed('slot3') || i.wasPressed('nextWeapon') || i.wasPressed('prevWeapon')) ab.armed = null;
+    } else if (ab.armed && alive) {
+      const i = this.input;
+      const d = ab.def(ab.armed);
+      const press: 0 | 1 | null = i.wasPressed('fire') ? 0 : i.wasPressed('aim') ? 1 : null;
+      if (press !== null) {
+        this.holdFire = true;
+        if (d.throwItem) {
+          // 우클릭 짧게 던지기(화염구 포함)는 언더핸드, 나머지는 오버핸드
+          hand.throw(press === 1 && (!d.alt || d.effect === 'hothands'));
+          this.pendingThrow = { slot: ab.armed, variant: press, t: THROW_RELEASE };
+        } else ab.fireArmed(press);
+      } else if (i.wasPressed('slot1') || i.wasPressed('slot2') || i.wasPressed('slot3') || i.wasPressed('nextWeapon') || i.wasPressed('prevWeapon')) ab.armed = null;
     }
+    if (this.steerSlot && !this.input.isDown('fire')) this.steerSlot = null;
+    // 손에 들고 있는 모습
+    const heldDef = ab.armed && alive ? ab.def(ab.armed) : null;
+    if (!hand.throwing) hand.setHeld(heldDef?.throwItem ?? null, heldDef?.itemColor ?? parseInt(ab.agent.color.slice(1), 16));
     if (this.piloting && !alive) this.piloting.life = 0;
     // 드론 조종 중: 좌클릭으로 파동
     if (this.piloting && alive && this.input.wasPressed('fire')) {

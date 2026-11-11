@@ -25,6 +25,14 @@ export interface BuiltMap {
 
 type UVMode = 'world' | 'box';
 
+/** 눈에 보이는 박스 (겹침 검사용) */
+export interface VisualBox {
+  box: AABB;
+  tex: string;
+  /** 'underlay'는 바닥 아래 받침판 (다른 박스와 겹쳐도 보이지 않음) */
+  kind: string;
+}
+
 interface PendingGeo {
   geo: THREE.BufferGeometry;
   castShadow: boolean;
@@ -37,6 +45,9 @@ const TEX_MATERIAL: Partial<Record<TextureName, string>> = {
   roof: 'iron', stair: 'concrete', trim: 'iron',
 };
 
+/** 벽·지붕 위로 올라가지 못하게 세우는 보이지 않는 충돌의 꼭대기 (m) */
+const SKY_LIMIT = 40;
+
 /** 텍스처 1장이 덮는 월드 크기 (m) — 텍셀 밀도를 맵 전체에서 일정하게 유지 */
 const TEX_WORLD_SIZE = 2;
 
@@ -46,8 +57,10 @@ const TEX_WORLD_SIZE = 2;
  */
 export class MapBuilder {
   private pending = new Map<TextureName, PendingGeo[]>();
-  private collision = new CollisionWorld();
+  private collision: CollisionWorld;
   private root = new THREE.Group();
+  /** 만든 모든 시각 박스 (validateMap에서 겹침 검사) */
+  readonly visual: VisualBox[] = [];
   private rows: number;
   private cols: number;
   private originX: number;
@@ -55,7 +68,10 @@ export class MapBuilder {
   /** 서버: 충돌·스폰·구역만 만들고 메시는 만들지 않는다 */
   private headless = false;
 
-  constructor(private def: MapDefinition) {
+  /** collision을 주면 그 충돌 세계를 비우고 다시 채운다 (맵 교체 시 참조 유지) */
+  constructor(private def: MapDefinition, collision?: CollisionWorld) {
+    this.collision = collision ?? new CollisionWorld();
+    this.collision.clear();
     this.rows = def.layout.length;
     this.cols = def.layout[0].length;
     def.layout.forEach((row, r) => {
@@ -212,8 +228,9 @@ export class MapBuilder {
   private addBox(
     b: AABB,
     tex: TextureName,
-    opts: { collide?: boolean; uv?: UVMode; castShadow?: boolean } = {},
+    opts: { collide?: boolean; uv?: UVMode; castShadow?: boolean; kind?: string } = {},
   ): void {
+    this.visual.push({ box: { ...b }, tex, kind: opts.kind ?? tex });
     const w = b.maxX - b.minX;
     const h = b.maxY - b.minY;
     const d = b.maxZ - b.minZ;
@@ -267,7 +284,7 @@ export class MapBuilder {
         minZ: this.originZ, maxZ: this.originZ + this.rows * cs,
       },
       'ground',
-      { collide: false, castShadow: false },
+      { collide: false, castShadow: false, kind: 'underlay' },
     );
     for (const rc of this.rects((r, c) => this.floorKind(r, c))) {
       this.addBox(
@@ -296,17 +313,20 @@ export class MapBuilder {
         if (!site) continue;
         const x0 = this.cellMinX(c);
         const z0 = this.cellMinZ(r);
-        const edges: [number, number, AABB][] = [
-          [-1, 0, { minX: x0, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: z0, maxZ: z0 + W }],
-          [1, 0, { minX: x0, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: z0 + cs - W, maxZ: z0 + cs }],
-          [0, -1, { minX: x0, maxX: x0 + W, minY: 0, maxY: 0.012, minZ: z0, maxZ: z0 + cs }],
-          [0, 1, { minX: x0 + cs - W, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: z0, maxZ: z0 + cs }],
+        const open = (dr: number, dc: number) =>
+          !SOLID_CELLS.has(this.at(r + dr, c + dc)) && siteOf(r + dr, c + dc) !== site;
+        const n = open(-1, 0);
+        const sth = open(1, 0);
+        // 남북 줄무늬가 있으면 동서 줄무늬는 그만큼 짧게 (모서리에서 두 줄무늬가 겹치지 않게)
+        const zA = z0 + (n ? W : 0);
+        const zB = z0 + cs - (sth ? W : 0);
+        const edges: [boolean, AABB][] = [
+          [n, { minX: x0, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: z0, maxZ: z0 + W }],
+          [sth, { minX: x0, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: z0 + cs - W, maxZ: z0 + cs }],
+          [open(0, -1), { minX: x0, maxX: x0 + W, minY: 0, maxY: 0.012, minZ: zA, maxZ: zB }],
+          [open(0, 1), { minX: x0 + cs - W, maxX: x0 + cs, minY: 0, maxY: 0.012, minZ: zA, maxZ: zB }],
         ];
-        for (const [dr, dc, box] of edges) {
-          const n = this.at(r + dr, c + dc);
-          if (SOLID_CELLS.has(n) || siteOf(r + dr, c + dc) === site) continue;
-          this.addBox(box, 'hazard', { collide: false, castShadow: false });
-        }
+        for (const [on, box] of edges) if (on && box.maxZ > box.minZ) this.addBox(box, 'hazard', { collide: false, castShadow: false });
       }
     }
   }
@@ -335,12 +355,37 @@ export class MapBuilder {
         },
         rc.key as TextureName,
       );
-      // 벽 위쪽 테두리 장식 (실루엣을 또렷하게)
+      // 보이지 않는 벽: 도약·활강으로 벽 위에 올라서지 못하게 하늘까지 막는다
+      this.collision.add({
+        minX: this.cellMinX(rc.c0), maxX: this.cellMinX(rc.c1) + cs,
+        minY: wallHeight, maxY: SKY_LIMIT,
+        minZ: this.cellMinZ(rc.r0), maxZ: this.cellMinZ(rc.r1) + cs,
+      });
+    }
+    // 벽 위쪽 테두리 장식 (실루엣을 또렷하게). 벽 전체를 한 덩어리로 병합해서 만들고,
+    // 바깥으로 튀어나오는 0.08m는 한 변 전체가 열려 있을 때만 (이웃 테두리와 겹치지 않게)
+    const T = 0.08;
+    const solid = (r: number, c: number) => SOLID_CELLS.has(this.at(r, c)) && r >= 0 && c >= 0 && r < this.rows && c < this.cols;
+    for (const rc of this.rects((r, c) => (SOLID_CELLS.has(this.at(r, c)) ? 'trim' : null))) {
+      let n = true, sth = true, w = true, e = true;
+      for (let c = rc.c0; c <= rc.c1; c++) {
+        if (solid(rc.r0 - 1, c) || rc.r0 === 0) n = false;
+        if (solid(rc.r1 + 1, c) || rc.r1 === this.rows - 1) sth = false;
+      }
+      for (let r = rc.r0; r <= rc.r1; r++) {
+        if (solid(r, rc.c0 - 1) || rc.c0 === 0) w = false;
+        if (solid(r, rc.c1 + 1) || rc.c1 === this.cols - 1) e = false;
+      }
+      // 모서리 대각선 이웃이 벽이면 그쪽 돌출이 그 벽의 테두리와 맞닿아 겹칠 수 있으니 확인
+      const diag = (dr: number, dc: number) => solid(dr < 0 ? rc.r0 - 1 : rc.r1 + 1, dc < 0 ? rc.c0 - 1 : rc.c1 + 1);
+      if ((n && w && diag(-1, -1)) || (n && e && diag(-1, 1)) || (sth && w && diag(1, -1)) || (sth && e && diag(1, 1))) {
+        n = sth = w = e = false;
+      }
       this.addBox(
         {
-          minX: this.cellMinX(rc.c0) - 0.08, maxX: this.cellMinX(rc.c1) + cs + 0.08,
+          minX: this.cellMinX(rc.c0) - (w ? T : 0), maxX: this.cellMinX(rc.c1) + cs + (e ? T : 0),
           minY: wallHeight, maxY: wallHeight + 0.25,
-          minZ: this.cellMinZ(rc.r0) - 0.08, maxZ: this.cellMinZ(rc.r1) + cs + 0.08,
+          minZ: this.cellMinZ(rc.r0) - (n ? T : 0), maxZ: this.cellMinZ(rc.r1) + cs + (sth ? T : 0),
         },
         'trim',
         { collide: false },
@@ -359,6 +404,12 @@ export class MapBuilder {
         },
         'roof',
       );
+      // 지붕 위도 올라설 수 없다
+      this.collision.add({
+        minX: this.cellMinX(rc.c0), maxX: this.cellMinX(rc.c1) + cs,
+        minY: roofHeight + 0.4, maxY: SKY_LIMIT,
+        minZ: this.cellMinZ(rc.r0), maxZ: this.cellMinZ(rc.r1) + cs,
+      });
     }
   }
 
@@ -409,6 +460,7 @@ export class MapBuilder {
             geo.translate(cx, h / 2, cz);
             applyWorldUVs(geo);
             this.queue('concrete', geo, true);
+            this.visual.push({ box: { minX: cx - 0.55, maxX: cx + 0.55, minY: 0, maxY: h, minZ: cz - 0.55, maxZ: cz + 0.55 }, tex: 'concrete', kind: 'pillar' });
             this.collision.add({ minX: cx - 0.5, maxX: cx + 0.5, minY: 0, maxY: h, minZ: cz - 0.5, maxZ: cz + 0.5, material: 'concrete' });
             break;
           }

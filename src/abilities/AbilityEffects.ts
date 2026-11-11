@@ -289,6 +289,17 @@ export class AbilityEffects {
     return (this.blinded.get(id) ?? 0) > 0;
   }
 
+  /** 남은 실명 시간 (초) */
+  blindLeft(id: string): number {
+    return this.blinded.get(id) ?? 0;
+  }
+
+  /** 온라인: 서버가 알려 준 실명 시간 */
+  setBlind(id: string, t: number): void {
+    if (t > 0) this.blinded.set(id, t);
+    else this.blinded.delete(id);
+  }
+
   /** 총알이 벽에 맞음 → 능력 방벽이면 피해 + 맞은 자리에 파문 */
   onImpact(point: THREE.Vector3, damage: number): void {
     for (const w of this.walls) {

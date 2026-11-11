@@ -352,7 +352,7 @@ export class AbilitySystem {
     if (!this.canUse(slot)) return false;
     if (this.targeting || this.charging) return false;
     // 꺼내 들기 (플레이어)
-    if (d.alt && this.host.armable && variant === undefined) {
+    if ((d.alt || d.throwItem) && this.host.armable && variant === undefined) {
       this.armed = slot;
       return true;
     }
@@ -501,8 +501,10 @@ export class AbilitySystem {
     const eye = cam.getWorldPosition(new THREE.Vector3());
     const aim = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()));
     const flat = new THREE.Vector3(aim.x, 0, aim.z).normalize();
-    // 던질 때는 약간 위로 (포물선)
-    const throwDir = aim.clone().add(new THREE.Vector3(0, 0.12, 0)).normalize();
+    // 던질 때는 약간 위로 (포물선). 손에 드는 능력의 우클릭은 아래로 짧게 (언더핸드)
+    const under = variant === 1 && !!d.throwItem && !d.alt;
+    const throwDir = aim.clone().add(new THREE.Vector3(0, under ? 0.28 : 0.12, 0)).normalize();
+    const speedK = under ? 0.5 : 1;
     const from = eye.clone().addScaledVector(aim, 0.4).add(new THREE.Vector3(0, -0.15, 0));
     const owner = h.shooter();
     const team = h.team();
@@ -516,11 +518,11 @@ export class AbilitySystem {
     switch (d.effect) {
       // ── WARDEN
       case 'stim':
-        fx.throwProjectile(from, throwDir, d.throwSpeed, 0xffa040, (p) => fx.spawnBeacon(adv.ground(p), d.radius, d.duration, team, 'stim'));
+        fx.throwProjectile(from, throwDir, d.throwSpeed * speedK, 0xffa040, (p) => fx.spawnBeacon(adv.ground(p), d.radius, d.duration, team, 'stim'));
         return true;
       case 'incendiary':
         // 발사기: 빠르게 날아가 바닥에서 한 번 튕긴 뒤 터진다
-        fx.throwProjectile(from, aim.clone().add(new THREE.Vector3(0, 0.08, 0)).normalize(), d.throwSpeed, 0xff6020, (p) => fx.spawnZone(adv.ground(p), d.radius, d.duration, d.power, owner, d.name, 0xff6020), 0, { bounces: 1, life: 3 });
+        fx.throwProjectile(from, under ? throwDir : aim.clone().add(new THREE.Vector3(0, 0.08, 0)).normalize(), d.throwSpeed * speedK, 0xff6020, (p) => fx.spawnZone(adv.ground(p), d.radius, d.duration, d.power, owner, d.name, 0xff6020), 0, { bounces: 1, life: 3 });
         return true;
 
       // ── VOLT
@@ -549,7 +551,7 @@ export class AbilitySystem {
       case 'cloudburst': {
         // 낮게 깔려 날아가며, 키를 누르고 있는 동안 조준 방향으로 휜다
         const steer = steerAim(d.slot);
-        fx.throwProjectile(eye.clone().addScaledVector(aim, 0.6), aim, d.throwSpeed, 0xcfe8ff, (p) => fx.spawnSmoke(p, d.radius, d.duration), 0, {
+        fx.throwProjectile(eye.clone().addScaledVector(aim, 0.6), aim, d.throwSpeed * speedK, 0xcfe8ff, (p) => fx.spawnSmoke(p, d.radius, d.duration), 0, {
           gravity: 4,
           life: 2.2,
           steer: steer ?? undefined,
@@ -627,7 +629,7 @@ export class AbilitySystem {
 
       // ── THORN
       case 'razorvine':
-        fx.throwProjectile(from, throwDir, d.throwSpeed, 0xb48cff, (p) => adv.vine(adv.ground(p), d.radius, owner, d.power, !!h.autonomous));
+        fx.throwProjectile(from, throwDir, d.throwSpeed * speedK, 0xb48cff, (p) => adv.vine(adv.ground(p), d.radius, owner, d.power, !!h.autonomous));
         return true;
       case 'shear': {
         // 벽면에 붙여 벽에서 뻗어 나가는 줄. 적이 넘어가면 줄을 따라 벽이 솟는다
@@ -689,7 +691,7 @@ export class AbilitySystem {
       }
       case 'meddle':
         // 바닥에 닿으면 0.75초 뒤 터져 범위 안 모두(나 포함)를 쇠약
-        fx.throwProjectile(from, throwDir, d.throwSpeed, 0xff7ad1, (p) =>
+        fx.throwProjectile(from, throwDir, d.throwSpeed * speedK, 0xff7ad1, (p) =>
           adv.schedule(0.75, () => {
             fx.adv.vfx.witherBurst(p, d.radius, 0xff7ad1);
             for (const t of adv.targetsNear(p.clone().setY(p.y + 1), d.radius, true, () => true)) fx.status.decay(t, d.power, d.duration);

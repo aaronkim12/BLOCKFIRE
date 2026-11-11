@@ -21,6 +21,8 @@
 export interface MapDefinition {
   id: string;
   name: string;
+  /** 맵 선택 화면의 한 줄 설명 */
+  blurb: string;
   cellSize: number;
   wallHeight: number;
   roofHeight: number;
@@ -40,6 +42,21 @@ export interface MapDefinition {
     hemiGround: number;
     hemiIntensity: number;
   };
+  /**
+   * 연습 모드 배치 (격자 칸 좌표, 소수 가능 — 14.5면 두 칸 사이)
+   *   dummies: [열, 행, 바라보는 방향, 높이?] 6개
+   *   showcase: 동작 쇼케이스 위치 [열, 행]
+   */
+  practice: {
+    dummies: [number, number, number, number?][];
+    showcase: [number, number];
+  };
+}
+
+/** 격자 칸 좌표 → 월드 좌표 (칸 중심) */
+export function cellToWorld(def: MapDefinition, c: number, r: number): { x: number; z: number } {
+  const cs = def.cellSize;
+  return { x: (-def.layout[0].length * cs) / 2 + (c + 0.5) * cs, z: (-def.layout.length * cs) / 2 + (r + 0.5) * cs };
 }
 
 export const SOLID_CELLS = new Set(['#']);

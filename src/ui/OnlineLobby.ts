@@ -2,6 +2,7 @@ import type { Game } from '../core/Game';
 import { NetClient } from '../net/NetClient';
 import { TEAM_SIZE, type RoomInfo, type ServerMsg } from '../net/protocol';
 import type { TeamId } from '../rounds/RoundManager';
+import { mapOptions } from '../maps';
 import { MATCH_MODES, type MatchMode } from '../rounds/matchConfig';
 
 /**
@@ -95,6 +96,9 @@ export class OnlineLobby {
       case 'agent':
         this.net.send({ t: 'agent', agent: el.dataset.agent! });
         break;
+      case 'map':
+        this.net.send({ t: 'map', map: el.dataset.map! });
+        break;
       case 'mode':
         this.net.send({ t: 'mode', mode: el.dataset.mode as MatchMode });
         break;
@@ -117,7 +121,7 @@ export class OnlineLobby {
     if (m.t === 'start') {
       this.hide();
       this.game.agentSelect.hide();
-      this.game.startOnline(this.net, m.config);
+      this.game.startOnline(this.net, m.config, m.map);
     }
     if (m.t === 'room') {
       // 방장이 시작 → 캐릭터 선택 화면
@@ -192,6 +196,10 @@ export class OnlineLobby {
         <h3>경기 방식</h3>
         <div class="ol-modes">${(Object.keys(MATCH_MODES) as MatchMode[])
           .map((m) => `<button data-act="mode" data-mode="${m}" class="${room.mode === m ? 'active' : ''}" ${me?.host ? '' : 'disabled'}><b>${MATCH_MODES[m].label}</b><small>${MATCH_MODES[m].desc}</small></button>`)
+          .join('')}</div>
+        <h3>맵</h3>
+        <div class="ol-modes ol-maps">${mapOptions()
+          .map((o) => `<button data-act="map" data-map="${o.id}" class="${room.map === o.id ? 'active' : ''}" ${me?.host ? '' : 'disabled'}><b>${o.label}</b><small>${o.desc}</small></button>`)
           .join('')}</div>
         <p class="ol-hint">경기를 시작하면 캐릭터 선택 화면에서 캐릭터를 고릅니다 (같은 팀 중복 불가).</p>
         <p class="ol-status">${escapeHtml(this.net.lastError)}</p>

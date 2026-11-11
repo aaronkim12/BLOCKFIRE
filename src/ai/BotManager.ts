@@ -32,8 +32,9 @@ const TICK = 1 / 64;
 const RIFLES = ['falcon', 'warhound', 'falcon', 'mule'];
 
 export class BotManager {
-  readonly nav: NavGrid;
-  readonly tactics: Tactics;
+  nav: NavGrid;
+  tactics: Tactics;
+  private env: { nav: NavGrid } | null = null;
   readonly bots: Bot[] = [];
   private brains = new Map<string, BotBrain>();
   private intel: Record<TeamId, TeamIntel> = { A: new TeamIntel(), B: new TeamIntel() };
@@ -54,6 +55,13 @@ export class BotManager {
     this.tactics = new Tactics(this.nav, game.map.collision);
     this.group.name = 'bots';
     game.scene.add(this.group);
+  }
+
+  /** 맵이 바뀌면 이동 격자·전술 지점을 다시 만든다 */
+  setMap(): void {
+    this.nav = new NavGrid(this.game.map.def, this.game.map.collision);
+    this.tactics = new Tactics(this.nav, this.game.map.collision);
+    if (this.env) this.env.nav = this.nav;
   }
 
   get allies(): Bot[] {
@@ -81,6 +89,7 @@ export class BotManager {
       surfaceAt: (x: number, y: number, z: number) => g.map.surfaceAt(x, y, z),
       noise: (src: Bot, pos: THREE.Vector3, radius: number) => this.noise(src.teamId, pos, radius),
     };
+    this.env = env;
     const specs: { id: string; name: string; team: TeamId }[] = [
       ...ALLY_NAMES.map((n, i) => ({ id: `ally-${i + 1}`, name: n, team: 'A' as TeamId })),
       ...ENEMY_NAMES.map((n, i) => ({ id: `enemy-${i + 1}`, name: n, team: 'B' as TeamId })),

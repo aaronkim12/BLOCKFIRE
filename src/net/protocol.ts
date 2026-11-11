@@ -40,6 +40,8 @@ export interface RoomInfo {
   /** 캐릭터 선택 남은 시간 (초, 선택 단계일 때) */
   selectLeft: number;
   mode: import('../rounds/matchConfig').MatchMode;
+  /** 방장이 고른 맵 (맵 id 또는 'random') */
+  map: string;
   players: LobbyPlayer[];
   inMatch: boolean;
 }
@@ -79,6 +81,8 @@ export interface NetPlayer {
   armor: number;
   /** 지금 걸린 상태 이상 (남은 초) */
   st?: Partial<Record<StatusKind, number>>;
+  /** 섬광에 눈이 먼 남은 시간 (초) */
+  bl?: number;
 }
 
 export interface RoundSnap {
@@ -119,6 +123,8 @@ export type ClientMsg =
   | { t: 'start' }
   /** 방장: 경기 방식 */
   | { t: 'mode'; mode: import('../rounds/matchConfig').MatchMode }
+  /** 방장: 맵 (맵 id 또는 'random') */
+  | { t: 'map'; map: string }
   | { t: 'state'; s: PlayerState }
   /** 사격: 서버 시각 at 기준으로 되감아 판정 (지연 보정) */
   | { t: 'fire'; weapon: string; eye: V3; dirs: V3[]; at: number }
@@ -135,7 +141,7 @@ export type ServerMsg =
   | { t: 'welcome'; id: string }
   | { t: 'room'; room: RoomInfo | null }
   | { t: 'error'; msg: string }
-  | { t: 'start'; you: string; config: import('../rounds/matchConfig').MatchConfig }
+  | { t: 'start'; you: string; config: import('../rounds/matchConfig').MatchConfig; /** 이번 경기 맵 id (무작위면 서버가 뽑은 맵) */ map: string }
   | { t: 'snap'; time: number; players: NetPlayer[]; round: RoundSnap; you: SelfSnap }
   /** 내 위치를 서버가 정함 (라운드 시작 스폰, 이동 검사 실패) */
   | { t: 'teleport'; p: V3; yaw: number; seq: number }

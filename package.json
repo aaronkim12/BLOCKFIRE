@@ -13,7 +13,8 @@
     "server": "npm run build:server && node dist-server/main.js",
     "start": "node dist-server/main.js",
     "build:all": "npm run build && npm run build:server",
-    "deploy:hosting": "npm run build && firebase deploy --only hosting"
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "check:maps": "vite build --ssr scripts/check-maps.ts --outDir node_modules/.check-maps --emptyOutDir --logLevel error && node node_modules/.check-maps/check-maps.js"
   },
   "dependencies": {
     "three": "^0.187.0",

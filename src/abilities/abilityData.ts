@@ -92,6 +92,12 @@ export interface AbilityDef {
   alt?: [string, string];
   /** 키를 누르고 있다가 떼면 발동 (누른 시간만큼 길어짐) */
   hold?: boolean;
+  /**
+   * 손에 들고 있다가 던지는 능력: 키를 누르면 꺼내 들고 좌클릭(던지기)/우클릭(짧게 아래로 던지기).
+   * 1인칭 손에 보일 물건 모양과 색.
+   */
+  throwItem?: 'orb' | 'beacon' | 'grenade' | 'shard';
+  itemColor?: number;
 }
 
 export interface AgentDef {
@@ -127,12 +133,12 @@ export const AGENTS: AgentDef[] = [
       ability1: A({
         id: 'rally', slot: 'ability1', name: 'RALLY BEACON', description: '신호기를 던진다. 착지한 자리 반경 6m 안의 아군은 연사·이동 속도가 10% 빨라진다 (벗어나도 4초 유지). 12초 지속.',
         effect: 'stim', cost: 200, maxCharges: 1, freeCharges: 0, cooldown: 0.5, duration: 12, radius: 6,
-        target: 'area', throwSpeed: 14, power: 1.1,
+        target: 'area', throwSpeed: 14, power: 1.1, throwItem: 'beacon', itemColor: 0xffa040,
       }),
       ability2: A({
         id: 'cinder', slot: 'ability2', name: 'CINDER SHELL', description: '발사기로 소이탄을 쏜다. 튕기다 멈춘 자리에 8초 동안 화염 지대(초당 60)가 생긴다.',
         effect: 'incendiary', cost: 250, maxCharges: 1, freeCharges: 0, cooldown: 0.5, duration: 8, radius: 4.5,
-        target: 'enemies', throwSpeed: 24, power: 60,
+        target: 'enemies', throwSpeed: 24, power: 60, throwItem: 'grenade', itemColor: 0xff6020,
       }),
       signature: A({
         id: 'skyveil', slot: 'signature', name: 'SKY VEIL', description: '전술 지도를 열어 50m 안에서 최대 3곳을 고르면(좌클릭, 다시 누르면 투하) 하늘에서 연막이 떨어져 19초 동안 시야를 막는다. 1회 무료, 추가 100.',
@@ -166,12 +172,12 @@ export const AGENTS: AgentDef[] = [
       ability2: A({
         id: 'heatcore', slot: 'ability2', name: 'HEAT CORE', description: '화염구를 던진다(좌클릭: 멀리, 우클릭: 짧게). 떨어진 자리에 4초 동안 화염 지대(초당 60)가 생긴다.',
         effect: 'hothands', cost: 200, maxCharges: 1, freeCharges: 0, cooldown: 0.5, duration: 4, radius: 4.5,
-        target: 'enemies', throwSpeed: 20, power: 60, alt: ['멀리 던지기', '짧게 던지기'],
+        target: 'enemies', throwSpeed: 20, power: 60, alt: ['멀리 던지기', '짧게 던지기'], throwItem: 'orb', itemColor: 0xff7a1a,
       }),
       signature: A({
         id: 'arcflare', slot: 'signature', name: 'ARC FLARE', description: '섬광탄을 꺼내 좌클릭은 왼쪽, 우클릭은 오른쪽으로 휘어 던진다. 0.6초 뒤 터지며 바라본 사람은 1.5초 동안 앞이 보이지 않는다. 1회 무료, 추가 250, 2킬마다 재충전.',
         effect: 'curveball', cost: 250, maxCharges: 2, freeCharges: 1, cooldown: 0.4, duration: 1.5, radius: 30,
-        target: 'enemies', throwSpeed: 16, power: 0, killRecharge: 2, alt: ['왼쪽으로 휨', '오른쪽으로 휨'],
+        target: 'enemies', throwSpeed: 16, power: 0, killRecharge: 2, alt: ['왼쪽으로 휨', '오른쪽으로 휨'], throwItem: 'orb', itemColor: 0xfff0a0,
       }),
       ultimate: A({
         id: 'rekindle', slot: 'ultimate', name: 'REKINDLE', description: '지금 자리에 표식을 남긴다. 10초 안에 쓰러지거나 시간이 다 되면 표식으로 돌아와 체력 100(방어구는 사용할 때만큼)으로 다시 싸운다.',
@@ -195,7 +201,7 @@ export const AGENTS: AgentDef[] = [
       ability1: A({
         id: 'veilburst', slot: 'ability1', name: 'VEIL BURST', description: '작은 연막탄을 던진다. 키를 누르고 있으면 조준하는 방향으로 휘어 날아가고, 닿은 자리(공중 포함)에 2.5초 동안 시야를 가리는 연기가 핀다.',
         effect: 'cloudburst', cost: 200, maxCharges: 2, freeCharges: 0, cooldown: 0.4, duration: 2.5, radius: 2.6,
-        target: 'area', throwSpeed: 22, power: 0,
+        target: 'area', throwSpeed: 22, power: 0, throwItem: 'orb', itemColor: 0xbfe8ff,
       }),
       ability2: A({
         id: 'uprise', slot: 'ability2', name: 'UPRISE', description: '순간적으로 바람을 일으켜 약 5.5m 높이로 솟구친다. 구매 단계에도 쓸 수 있다.',
@@ -264,7 +270,7 @@ export const AGENTS: AgentDef[] = [
       ability2: A({
         id: 'knock', slot: 'ability2', name: 'KNOCK GRENADE', description: '충격탄을 꺼내 좌클릭은 닿는 곳에 바로 붙이고, 우클릭은 한 번 튕긴 뒤 붙인다. 1초 뒤 터져 35~20 피해와 1.5~2.5초 충격.',
         effect: 'sticky', cost: 200, maxCharges: 1, freeCharges: 0, cooldown: 0.6, duration: 2.5, radius: 5,
-        target: 'enemies', throwSpeed: 18, power: 35, alt: ['바로 붙이기', '한 번 튕기기'],
+        target: 'enemies', throwSpeed: 18, power: 35, alt: ['바로 붙이기', '한 번 튕기기'], throwItem: 'grenade', itemColor: 0xd9c25a,
       }),
       signature: A({
         id: 'strike', slot: 'signature', name: 'STRIKE CALL', description: '전술 지도를 열어 45m 안에서 최대 2곳을 고르면(좌클릭, 다시 누르면 발사) 미사일이 1.25초 날아가 0.8초 간격으로 세 번 폭발한다 (한 번에 50~65). 미사일 1발당 1회 충전. 1회 무료, 추가 150.',
@@ -291,7 +297,7 @@ export const AGENTS: AgentDef[] = [
       ability1: A({
         id: 'briar', slot: 'ability1', name: 'BRIAR NEST', description: '가시덤불을 던진다. 떨어지면 거의 보이지 않고(4m 안의 적에게만 희미하게), 다시 누르면 0.3초 뒤 7초 동안 솟아 안에서 움직이는 적을 15% 느리게 하고 움직인 거리만큼 피해(걸음마다 10)를 준다.',
         effect: 'razorvine', cost: 150, maxCharges: 2, freeCharges: 0, cooldown: 0.5, duration: 7, radius: 4,
-        target: 'enemies', throwSpeed: 14, power: 10,
+        target: 'enemies', throwSpeed: 14, power: 10, throwItem: 'shard', itemColor: 0xb48cff,
       }),
       ability2: A({
         id: 'snapwall', slot: 'ability2', name: 'SNAP WALL', description: '벽면에 보이지 않는 함정 줄을 붙인다. 적이 그 줄을 지나가면 0.8초 뒤 줄을 따라 부서지지 않는 벽이 6초 동안 솟아 길을 끊는다.',
@@ -328,7 +334,7 @@ export const AGENTS: AgentDef[] = [
       ability2: A({
         id: 'wither', slot: 'ability2', name: 'WITHER', description: '파편을 던진다. 바닥에 닿으면 0.75초 뒤 터져 반경 4m 안의 모든 사람(나 포함)의 체력을 5초 동안 90 깎는다 (쇠약, 이것만으로는 죽지 않음).',
         effect: 'meddle', cost: 250, maxCharges: 1, freeCharges: 0, cooldown: 0.5, duration: 5, radius: 4,
-        target: 'enemies', throwSpeed: 15, power: 90,
+        target: 'enemies', throwSpeed: 15, power: 90, throwItem: 'shard', itemColor: 0xff7ad1,
       }),
       signature: A({
         id: 'veilcall', slot: 'signature', name: 'VEIL CALL', description: '전술 지도를 열어 최대 2곳을 고르면 연막이 13.5초 동안 핀다. 쓰러진 뒤에도 쓸 수 있다 (내 몸 근처에 1개, 6초). 충전은 40초마다 다시 채워진다.',

@@ -5,6 +5,7 @@ import type { CombatSystem, Damageable, DamageEvent } from '../combat/CombatSyst
 import type { Capsule } from '../combat/Hitbox';
 import { MuzzleFlash } from '../effects/MuzzleFlash';
 import type { CollisionWorld } from '../physics/CollisionWorld';
+import { cellToWorld, type MapDefinition } from '../maps/MapData';
 import { getWeapon, type WeaponDef } from '../weapons/weaponData';
 import { loadWeaponTemplate } from '../weapons/WeaponModels';
 import { CharacterModel, DEFAULT_POSE, type CharacterPose, type Team } from './CharacterModel';
@@ -299,6 +300,23 @@ export class PracticeDummies {
     if (m.weapon && id !== 'blade') m.weapon.muzzle.add(this.showcaseFlash.object);
   }
 
+
+  /** 맵에 맞춰 더미·쇼케이스 위치를 옮긴다 */
+  layout(def: MapDefinition): void {
+    def.practice.dummies.forEach(([c, r, yaw, y], i) => {
+      const d = this.dummies[i];
+      if (!d) return;
+      const w = cellToWorld(def, c, r);
+      d.spec.x = w.x;
+      d.spec.z = w.z;
+      d.spec.y = y;
+      d.spec.yaw = yaw;
+      d.homeYaw = yaw;
+      if (d.enabled) d.resetHome();
+    });
+    const sc = cellToWorld(def, def.practice.showcase[0], def.practice.showcase[1]);
+    this.showcaseCenter.set(sc.x, 0, sc.z);
+  }
 
   /** @param ctx 반격에 필요한 정보 (메뉴 배경 등에서는 생략) */
   update(dt: number, ctx?: DummyContext): void {

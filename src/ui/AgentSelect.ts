@@ -5,6 +5,7 @@ import type { Game } from '../core/Game';
 import { AgentPreview } from './AgentPreview';
 import type { NetClient } from '../net/NetClient';
 import type { RoomInfo } from '../net/protocol';
+import { mapOptions } from '../maps';
 import { effectIcon, roleIcon } from './icons';
 
 const SLOT_LABEL: Record<AbilitySlot, string> = { ability1: '기본', ability2: '기본', signature: '고유', ultimate: '궁극기' };
@@ -66,6 +67,16 @@ export class AgentSelect {
     const diff = t.closest<HTMLElement>('[data-diff]');
     if (diff) {
       this.game.botDifficulty = diff.dataset.diff as BotDifficulty;
+      this.renderFooter();
+    }
+    const mapBtn = t.closest<HTMLElement>('[data-map]');
+    if (mapBtn) {
+      this.game.mapChoice = mapBtn.dataset.map!;
+      try {
+        localStorage.setItem('blockfire.map', this.game.mapChoice);
+      } catch {
+        /* 저장할 수 없으면 이번 세션만 */
+      }
       this.renderFooter();
     }
     const mode = t.closest<HTMLElement>('[data-mode]');
@@ -219,6 +230,7 @@ export class AgentSelect {
           }).join('')}
         </div>
         <div class="as-actions">
+          ${online ? '' : '<div class="as-diff as-map"></div>'}
           ${isMatch ? '<div class="as-diff as-matchmode"></div><div class="as-diff as-bots"></div>' : ''}
           ${online ? this.teamHtml() : ''}
           <div class="row">
@@ -285,6 +297,14 @@ export class AgentSelect {
   }
 
   private renderFooter(): void {
+    const mapRow = this.root.querySelector('.as-map');
+    if (mapRow) {
+      const opts = mapOptions();
+      const cur = opts.find((o) => o.id === this.game.mapChoice) ?? opts[0];
+      mapRow.innerHTML = `<span>MAP</span>${opts
+        .map((o) => `<button data-map="${o.id}" class="${o.id === cur.id ? 'active' : ''}" title="${o.desc}">${o.label}</button>`)
+        .join('')}<em>${cur.desc}</em>`;
+    }
     const modeRow = this.root.querySelector('.as-matchmode');
     if (modeRow)
       modeRow.innerHTML = `<span>MATCH</span>${(Object.keys(MATCH_MODES) as MatchMode[])

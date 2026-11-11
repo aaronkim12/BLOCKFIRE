@@ -8,6 +8,7 @@ import type { MapDefinition } from './MapData';
 export const FOUNDRY: MapDefinition = {
   id: 'foundry',
   name: 'FOUNDRY',
+  blurb: '노을 진 주조 공장 · 중앙 실내 건물',
   cellSize: 3,
   wallHeight: 6,
   roofHeight: 4,
@@ -59,5 +60,16 @@ export const FOUNDRY: MapDefinition = {
     hemiGround: 0x6a5440,
     // 그늘 속 적도 식별할 수 있도록 환경광을 충분히 준다
     hemiIntensity: 1.8,
+  },
+  practice: {
+    dummies: [
+      [4, 6, Math.PI],
+      [7, 7, Math.PI, 1.6],
+      [25, 9, Math.PI * 0.8],
+      [14.5, 20, Math.PI],
+      [24, 19, Math.PI],
+      [14, 2, Math.PI],
+    ],
+    showcase: [16, 25.5],
   },
 };

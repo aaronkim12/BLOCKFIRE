@@ -40,6 +40,12 @@ export class CollisionWorld {
     }
   }
 
+  /** 모든 박스 제거 (맵 교체) */
+  clear(): void {
+    this.boxes.length = 0;
+    this.grid.clear();
+  }
+
   /** 박스 제거 (능력으로 세운 방벽 등 임시 장애물) */
   remove(box: AABB): void {
     const i = this.boxes.indexOf(box);

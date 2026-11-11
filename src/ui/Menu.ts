@@ -63,7 +63,7 @@ export class Menu {
           <button data-act="settings">SETTINGS</button>
         </nav>
         <a class="feedback-link" href="https://forms.gle/xcjLgypmjX18rDAN7" target="_blank" rel="noopener noreferrer">💬 추가했으면 하는 기능 알려주기 <small>설문 참여</small></a>
-        <p class="build">BUILD 0.8 · PHASE 8 · MAP: ${game.map.def.name}</p>
+        <p class="build">BUILD 0.8 · PHASE 8 · MAP: <span class="map-name">${game.map.def.name}</span></p>
       </div>
       <div class="menu pause-menu">
         <h2>PAUSED</h2>
@@ -143,6 +143,12 @@ export class Menu {
       if (this.game.state === 'menu') this.root.hidden = false;
     };
     requestAnimationFrame(check);
+  }
+
+  /** 맵이 바뀌면 메뉴의 맵 이름 갱신 */
+  refresh(): void {
+    const el = this.root.querySelector('.map-name');
+    if (el) el.textContent = this.game.map.def.name;
   }
 
   show(state: GameState): void {

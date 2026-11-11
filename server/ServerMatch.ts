@@ -6,6 +6,7 @@ import { applyDamage } from '../src/combat/ballistics';
 import { CombatSystem, type DamageEvent } from '../src/combat/CombatSystem';
 import { Economy } from '../src/economy/Economy';
 import { FOUNDRY } from '../src/maps/foundry';
+import type { MapDefinition } from '../src/maps/MapData';
 import { MapBuilder } from '../src/maps/MapBuilder';
 import type { AABB } from '../src/physics/CollisionWorld';
 import { DEFAULT_MATCH, type MatchConfig } from '../src/rounds/matchConfig';
@@ -35,7 +36,7 @@ export class ServerMatch {
   readonly rm: RoundManager;
   readonly economy = new Economy();
   readonly avatars = new Map<string, Avatar>();
-  private map = new MapBuilder(FOUNDRY).buildCollision();
+  private map: ReturnType<MapBuilder['buildCollision']>;
   private combat: CombatSystem;
   private fx: AbilityEffects;
   private time = 0;
@@ -50,7 +51,9 @@ export class ServerMatch {
     players: LobbyPlayer[],
     private send: (id: string | null, msg: ServerMsg) => void,
     readonly config: MatchConfig = { ...DEFAULT_MATCH },
+    mapDef: MapDefinition = FOUNDRY,
   ) {
+    this.map = new MapBuilder(mapDef).buildCollision();
     this.combat = new CombatSystem(this.map.collision, {
       onTracer: (_from, to) => this.tracerEnds.push(v3(to)),
       onHit: (e) => {
@@ -494,7 +497,8 @@ export class ServerMatch {
         const t = this.fx.status.remaining(a.id, k);
         if (t > 0) st[k] = +t.toFixed(2);
       }
-      return { id: a.id, s: a.s, alive: a.alive, hp: Math.round(a.vitals.health), armor: a.vitals.armor, st };
+      const bl = this.fx.blindLeft(a.id);
+      return { id: a.id, s: a.s, alive: a.alive, hp: Math.round(a.vitals.health), armor: a.vitals.armor, st, bl: bl > 0 ? +bl.toFixed(2) : undefined };
     });
     const round = {
       sides: { ...rm.sides }, state: rm.state, round: rm.round, timeLeft: +rm.timeLeft.toFixed(2), score: rm.score, core: rm.core,

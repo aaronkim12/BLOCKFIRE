@@ -266,6 +266,7 @@ export class OnlineMatch {
         continue;
       }
       rp.team = this.rm.sideOf(rp.teamId);
+      g.abilityFx.setBlind(np.id, np.bl ?? 0);
       rp.push(m.time, np.s, np.alive, np.hp, np.armor);
     }
 

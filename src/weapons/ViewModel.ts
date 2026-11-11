@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MuzzleFlash } from '../effects/MuzzleFlash';
 import { BladeStormVisual } from '../effects/BladeStormVisual';
+import { AbilityHand } from '../effects/AbilityHand';
 import { CharacterModel, type Team } from '../player/CharacterModel';
 import type { WeaponCategory } from './weaponData';
 import type { WeaponInventory } from './WeaponInventory';
@@ -69,6 +70,8 @@ export class ViewModel {
   private flash = new MuzzleFlash(0.16);
   /** 궁극기 투척 단검 (화면 앞에 떠다님) */
   readonly storm = new BladeStormVisual('fp');
+  /** 던지는 능력을 든 손 */
+  readonly abilityHand = new AbilityHand();
   private sun: THREE.DirectionalLight;
   private hemi: THREE.HemisphereLight;
 
@@ -97,7 +100,7 @@ export class ViewModel {
     this.hemi = new THREE.HemisphereLight(0xb8c4dc, 0x6a5440, 1.6);
     this.sun = new THREE.DirectionalLight(0xffe2b8, 1.6);
     this.sun.position.set(0.5, 1, 0.3);
-    this.scene.add(this.hemi, this.sun, this.storm.group);
+    this.scene.add(this.hemi, this.sun, this.storm.group, this.abilityHand.group);
   }
 
   async init(team: Team): Promise<void> {
@@ -157,6 +160,10 @@ export class ViewModel {
     const t = this.template;
     const storm = t?.def.id === 'storm';
     this.storm.group.visible = this.visible && storm;
+    // 능력을 들고 있는 동안은 무기·팔 대신 능력 손
+    this.abilityHand.update(input.dt, { x: Math.sin(this.bobPhase) * 0.01 * this.bobAmount, y: -Math.abs(Math.cos(this.bobPhase)) * 0.01 * this.bobAmount });
+    const handUp = this.abilityHand.active;
+    if (!this.visible) this.abilityHand.group.visible = false;
     if (storm) {
       this.storm.setCount(inv.current?.mag ?? 0);
       this.storm.update(input.dt);
@@ -256,7 +263,7 @@ export class ViewModel {
     arms.updateFirstPerson(rp, animW, tap);
     this.flash.update(dt);
     // 저격총 정조준 시에는 조준경 화면만 보여 준다
-    arms.root.visible = this.visible && !storm && !(def.category === 'sniper' && aim > 0.95);
+    arms.root.visible = this.visible && !storm && !handUp && !(def.category === 'sniper' && aim > 0.95);
   }
 }
 

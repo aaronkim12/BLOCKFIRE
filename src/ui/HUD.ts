@@ -176,7 +176,8 @@ export class HUD {
     if (game.reviveChannel > 0) chips.push(`<span class="good">되살아나는 중 ${game.reviveChannel.toFixed(1)}</span>`);
     if (ab.armed) {
       const d = ab.def(ab.armed);
-      chips.push(`<span class="good">${d.name} · 좌클릭: ${d.alt?.[0]} · 우클릭: ${d.alt?.[1]}</span>`);
+      const alt = d.alt ?? ['던지기', '짧게 던지기'];
+      chips.push(`<span class="good">${d.name} · 좌클릭: ${alt[0]} · 우클릭: ${alt[1]}</span>`);
     }
     if (ab.charging) {
       const d = ab.def(ab.charging.slot);

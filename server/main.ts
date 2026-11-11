@@ -4,6 +4,7 @@ import { NET_PORT, SELECT_TIME, SERVER_TICK, TEAM_SIZE, type RoomPhase, type Cli
 import { DEFAULT_MATCH, MATCH_MODES, withMode, type MatchConfig, type MatchMode } from '../src/rounds/matchConfig';
 import type { TeamId } from '../src/rounds/RoundManager';
 import { ServerMatch } from './ServerMatch';
+import { MAPS, RANDOM_MAP, resolveMap } from '../src/maps';
 import { createStaticServer } from './static';
 
 /**
@@ -30,6 +31,10 @@ class Room {
   ending = false;
   /** 경기 방식 (방장이 고름) */
   mode: MatchMode = 'standard';
+  /** 맵 (방장이 고름, 'random'이면 경기 시작 때 뽑음) */
+  map: string = RANDOM_MAP;
+  /** 지난 경기 맵 (무작위일 때 연속으로 같은 맵이 나오지 않게) */
+  lastMap = '';
   /** 대기실 → 캐릭터 선택 → 경기 */
   selecting = false;
   /** 캐릭터 선택 마감 시각 (ms) */
@@ -46,7 +51,7 @@ class Room {
 
   info(): RoomInfo {
     const selectLeft = this.selecting ? Math.max(0, Math.ceil((this.selectEnds - Date.now()) / 1000)) : 0;
-    return { code: this.code, phase: this.phase, selectLeft, mode: this.mode, players: this.players, inMatch: !!this.match };
+    return { code: this.code, phase: this.phase, selectLeft, mode: this.mode, map: this.map, players: this.players, inMatch: !!this.match };
   }
 
   broadcast(msg: ServerMsg): void {
@@ -181,6 +186,11 @@ function handle(c: Client, m: ClientMsg): void {
       room.mode = m.mode;
       room.sendRoom();
       return;
+    case 'map':
+      if (room.selecting || !me.host || (m.map !== RANDOM_MAP && !MAPS.some((d) => d.id === m.map))) return;
+      room.map = m.map;
+      room.sendRoom();
+      return;
     case 'start':
       if (!me.host || room.selecting) return;
       // 캐릭터 선택 단계로
@@ -209,13 +219,15 @@ function checkSelect(room: Room): void {
 }
 
 function startMatch(room: Room): void {
+  const mapDef = resolveMap(room.map, room.lastMap);
+  room.lastMap = mapDef.id;
   const match = new ServerMatch(room.players, (id, msg) => {
     if (id === null) room.broadcast(msg);
     else send(clients.get(id), msg);
-  }, room.config);
+  }, room.config, mapDef);
   room.match = match;
   room.time = 0;
-  for (const p of room.players) send(clients.get(p.id), { t: 'start', you: p.id, config: room.config });
+  for (const p of room.players) send(clients.get(p.id), { t: 'start', you: p.id, config: room.config, map: mapDef.id });
   room.sendRoom();
   match.start();
 }
