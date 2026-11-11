@@ -635,10 +635,11 @@ export class Bot implements FacingTarget {
     const st = this.env.fx.status;
     c.speedMul = st.speedMul(this.id);
     if (st.has(this.id, 'concuss')) {
-      // 충격: 조준이 흔들리고 탄이 퍼진다
-      this.aimYaw += (Math.random() - 0.5) * 0.03;
-      this.aimPitch += (Math.random() - 0.5) * 0.02;
-      this.bloom = Math.max(this.bloom, 3);
+      // 충격: 조준이 크게 흔들리고 탄이 퍼진다 (발로란트처럼 제대로 맞서 싸우기 어렵게)
+      const w = performance.now() / 1000 + this.id.length;
+      this.aimYaw += Math.sin(w * 5.3) * dt * 1.4 + (Math.random() - 0.5) * 0.04;
+      this.aimPitch += Math.sin(w * 4.1 + 1) * dt * 0.9 + (Math.random() - 0.5) * 0.03;
+      this.bloom = Math.max(this.bloom, 7);
     }
     if (st.has(this.id, 'jam') && this.slot === 'primary' && this.stormKnives <= 0) {
       this.slot = 'secondary';

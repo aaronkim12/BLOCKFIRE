@@ -11,6 +11,7 @@ import type { BotDifficulty } from '../ai/botConfig';
 import { RoundHUD } from '../ui/RoundHUD';
 import { Economy } from '../economy/Economy';
 import type { MatchConfig } from './matchConfig';
+import { CORE_VIEW_DIST, orbitCamera, SPECTATE_DIST, SPECTATE_PITCH } from './SpectateCam';
 import { RoundManager, type RoundState, type Side, type SiteId, type TeamId, type Vec3 } from './RoundManager';
 
 /**
@@ -320,43 +321,59 @@ export class MatchController {
   spectatingName: string | null = null;
 
   /**
-   * 사망 후 관전 카메라.
-   * 살아 있는 아군이 있으면 그 아군의 1인칭 시점을 보여 주고, 좌클릭/우클릭으로 대상을 바꾼다.
-   * 아군이 모두 죽었거나 없으면 사망 지점 위를 천천히 돈다.
+   * 사망 후 관전 카메라 (3인칭).
+   * 살아 있는 아군이 있으면 그 아군 주위를 마우스로 돌려 보고, 좌클릭/우클릭으로 대상을 바꾼다.
+   * 아군이 모두 죽었는데 Core가 설치되어 있으면 Core 주위를, 아니면 사망 지점 주위를 본다.
    */
   spectate(camera: THREE.PerspectiveCamera, dt: number, next = false, prev = false): boolean {
     const prevId = this.spectateId;
     const r = this.spectateInner(camera, dt, next, prev);
     const now = r ? this.spectateId : null;
-    if (prevId !== now) {
-      if (prevId) this.allies.get(prevId)?.onSpectate?.(false);
-      if (now) this.allies.get(now)?.onSpectate?.(true);
-    }
+    // 3인칭 관전이라 대상의 몸은 숨기지 않는다 (예전 1인칭 관전에서 숨긴 것만 되돌림)
+    if (prevId !== now && prevId) this.allies.get(prevId)?.onSpectate?.(false);
     if (!r) this.spectateId = null;
     return r;
   }
 
-  private spectateInner(camera: THREE.PerspectiveCamera, dt: number, next: boolean, prev: boolean): boolean {
+  private spectateInner(camera: THREE.PerspectiveCamera, _dt: number, next: boolean, prev: boolean): boolean {
     this.spectatingName = null;
     if (this.game.local.alive || this.game.local.deadTime < 1.5) return false;
+    const look = this.game.player;
+    const world = this.game.map.collision;
     const alive = [...this.allies.keys()].filter((id) => this.rm.participants.get(id)?.alive && id !== PLAYER_ID);
     if (alive.length > 0) {
       let i = Math.max(0, alive.indexOf(this.spectateId ?? ''));
       if (!this.spectateId || !alive.includes(this.spectateId)) i = 0;
       if (next) i = (i + 1) % alive.length;
       if (prev) i = (i - 1 + alive.length) % alive.length;
+      const v = this.allies.get(alive[i])!;
+      // 새 대상: 그 아군 뒤에서 시작
+      if (this.spectateId !== alive[i]) {
+        look.yaw = v.yaw();
+        look.pitch = SPECTATE_PITCH;
+      }
       this.spectateId = alive[i];
-      const v = this.allies.get(this.spectateId)!;
-      v.eye(camera.position);
-      camera.rotation.set(v.pitch(), v.yaw(), 0, 'YXZ');
+      const t = v.eye(new THREE.Vector3());
+      t.y -= 0.2;
+      orbitCamera(camera, world, t, look.yaw, look.pitch, SPECTATE_DIST);
       this.spectatingName = v.name;
       return true;
     }
+    if (this.spectateId !== null || this.spectateAngle === 0) {
+      look.pitch = SPECTATE_PITCH;
+      this.spectateAngle = 1;
+    }
     this.spectateId = null;
-    this.spectateAngle += dt * 0.3;
+    // 아군 전멸: 설치된 Core를 보여 준다
+    const core = this.rm.core;
+    if (core.status === 'planted' && core.position) {
+      const t = new THREE.Vector3(core.position.x, core.position.y + 0.4, core.position.z);
+      orbitCamera(camera, world, t, look.yaw, look.pitch, CORE_VIEW_DIST);
+      this.spectatingName = 'CORE';
+      return true;
+    }
     const c = this.deathPos;
-    camera.position.set(c.x + Math.sin(this.spectateAngle) * 6, c.y + 6, c.z + Math.cos(this.spectateAngle) * 6);
-    camera.lookAt(c.x, c.y + 1, c.z);
+    orbitCamera(camera, world, new THREE.Vector3(c.x, c.y + 1, c.z), look.yaw, look.pitch, CORE_VIEW_DIST);
     return true;
   }
 

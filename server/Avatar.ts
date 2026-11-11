@@ -26,6 +26,8 @@ export class Avatar implements Damageable {
   alive = true;
   vitals = { health: 100, armor: 0 };
   invulnerable = false;
+  /** 지진 등으로 띄워짐 → 클라이언트에 전달 */
+  onKnock?: (vy: number) => void;
   s: PlayerState = {
     p: [0, 0, 0], yaw: 0, pitch: 0, crouch: 0, v: [0, 0], grounded: true, weapon: 'tack', reload: -1, act: 0, moving: false,
   };
@@ -51,6 +53,10 @@ export class Avatar implements Damageable {
   readonly abilities: AbilitySystem;
   private history: Sample[] = [];
   private rewound: Sample | null = null;
+
+  knock(vy: number): void {
+    if (this.alive) this.onKnock?.(vy);
+  }
 
   constructor(
     readonly id: string,

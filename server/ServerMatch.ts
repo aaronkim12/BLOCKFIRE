@@ -102,6 +102,7 @@ export class ServerMatch {
         onKilled: (av, e) => this.onDeath(av, e),
         onDeathAvoided: (av) => this.returnToMarker(av),
       });
+      a.onKnock = (vy) => this.send(a.id, { t: 'knock', vy });
       this.avatars.set(p.id, a);
       this.combat.addTarget(a);
       this.rm.addParticipant({ id: p.id, name: p.name, team: p.team });

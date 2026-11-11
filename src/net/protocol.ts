@@ -145,6 +145,8 @@ export type ServerMsg =
   | { t: 'snap'; time: number; players: NetPlayer[]; round: RoundSnap; you: SelfSnap }
   /** 내 위치를 서버가 정함 (라운드 시작 스폰, 이동 검사 실패) */
   | { t: 'teleport'; p: V3; yaw: number; seq: number }
+  /** 지진 등으로 띄워짐 (내 캐릭터) */
+  | { t: 'knock'; vy: number }
   | { t: 'hit'; shooter: string; target: string; part: 'head' | 'body' | 'leg'; damage: number; point: V3; from: V3 }
   | { t: 'shot'; shooter: string; weapon: string; from: V3; to: V3[] }
   | { t: 'kill'; shooter: string; shooterName: string; target: string; targetName: string; weapon: string; head: boolean }

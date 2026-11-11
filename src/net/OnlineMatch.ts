@@ -11,6 +11,7 @@ import { getWeapon } from '../weapons/weaponData';
 import { loadWeaponTemplate } from '../weapons/WeaponModels';
 import type { NetClient } from './NetClient';
 import { CLIENT_SEND_RATE, type PlayerState, type ServerMsg, type V3 } from './protocol';
+import { CORE_VIEW_DIST, orbitCamera, SPECTATE_DIST, SPECTATE_PITCH } from '../rounds/SpectateCam';
 import { RemotePlayer } from './RemotePlayer';
 
 const REASON_TEXT: Record<string, (mine: boolean) => string> = {
@@ -124,6 +125,9 @@ export class OnlineMatch {
     switch (m.t) {
       case 'snap':
         this.applySnapshot(m);
+        break;
+      case 'knock':
+        g.local.knock(m.vy);
         break;
       case 'teleport':
         this.tpSeq = m.seq;
@@ -268,6 +272,7 @@ export class OnlineMatch {
       }
       rp.team = this.rm.sideOf(rp.teamId);
       g.abilityFx.setBlind(np.id, np.bl ?? 0);
+      g.abilityFx.status.setAll(np.id, np.st ?? {});
       rp.push(m.time, np.s, np.alive, np.hp, np.armor);
     }
 
@@ -484,7 +489,7 @@ export class OnlineMatch {
     return out;
   }
 
-  spectate(camera: THREE.PerspectiveCamera, dt: number, next = false, prev = false): boolean {
+  spectate(camera: THREE.PerspectiveCamera, _dt: number, next = false, prev = false): boolean {
     this.spectatingName = null;
     const L = this.game.local;
     if (L.alive || L.deadTime < 1.5) {
@@ -493,22 +498,40 @@ export class OnlineMatch {
     }
     const views = this.allyViews();
     for (const r of this.remotes.values()) r.model.root.visible = true;
+    const look = this.game.player;
+    const world = this.game.map.collision;
     if (views.length) {
       let i = Math.max(0, views.findIndex(([id]) => id === this.spectateId));
       if (next) i = (i + 1) % views.length;
       if (prev) i = (i - 1 + views.length) % views.length;
       const [id, v] = views[i];
+      // 새 대상: 그 아군 뒤에서 시작 (3인칭, 마우스로 돌려 봄)
+      if (this.spectateId !== id) {
+        look.yaw = v.yaw();
+        look.pitch = SPECTATE_PITCH;
+      }
       this.spectateId = id;
-      v.onSpectate?.(true);
-      v.eye(camera.position);
-      camera.rotation.set(v.pitch(), v.yaw(), 0, 'YXZ');
+      const t = v.eye(new THREE.Vector3());
+      t.y -= 0.2;
+      orbitCamera(camera, world, t, look.yaw, look.pitch, SPECTATE_DIST);
       this.spectatingName = v.name;
       return true;
     }
-    this.spectateAngle += dt * 0.3;
+    if (this.spectateId !== null || this.spectateAngle === 0) {
+      look.pitch = SPECTATE_PITCH;
+      this.spectateAngle = 1;
+    }
+    this.spectateId = null;
+    // 아군 전멸: 설치된 Core를 보여 준다
+    const core = this.rm.core;
+    if (core.status === 'planted' && core.position) {
+      const t = new THREE.Vector3(core.position.x, core.position.y + 0.4, core.position.z);
+      orbitCamera(camera, world, t, look.yaw, look.pitch, CORE_VIEW_DIST);
+      this.spectatingName = 'CORE';
+      return true;
+    }
     const c = this.deathPos;
-    camera.position.set(c.x + Math.sin(this.spectateAngle) * 6, c.y + 6, c.z + Math.cos(this.spectateAngle) * 6);
-    camera.lookAt(c.x, c.y + 1, c.z);
+    orbitCamera(camera, world, new THREE.Vector3(c.x, c.y + 1, c.z), look.yaw, look.pitch, CORE_VIEW_DIST);
     return true;
   }
 

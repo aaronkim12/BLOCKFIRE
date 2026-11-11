@@ -147,8 +147,23 @@ export class Dummy implements Damageable {
     this.fireCooldown = 1.5;
   }
 
+  /** 띄워진 높이·속도 (지진) */
+  private hopY = 0;
+  private hopV = 0;
+
+  knock(vy: number): void {
+    if (this.alive) this.hopV = Math.max(this.hopV, vy);
+  }
+
   update(dt: number, ctx?: DummyContext): void {
     if (!this.enabled) return;
+    if (this.hopV !== 0 || this.hopY > 0) {
+      const prev = this.hopY;
+      this.hopV -= 20 * dt;
+      this.hopY = Math.max(0, this.hopY + this.hopV * dt);
+      if (this.hopY === 0) this.hopV = 0;
+      this.model.root.position.y += this.hopY - prev;
+    }
     const p = this.pose;
     p.fire = Math.max(0, p.fire - dt * 8);
     if (!this.alive) {

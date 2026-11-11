@@ -18,6 +18,7 @@ import { BotManager } from '../ai/BotManager';
 import type { NetClient } from '../net/NetClient';
 import { OnlineMatch } from '../net/OnlineMatch';
 import { BlindGlow } from '../effects/BlindGlow';
+import { ConcussMark } from '../effects/ConcussMark';
 import { THROW_RELEASE } from '../effects/AbilityHand';
 import type { BotDifficulty } from '../ai/botConfig';
 import { PSXRenderer } from '../graphics/PSXRenderer';
@@ -142,6 +143,8 @@ export class Game {
   private stormFanning = false;
   /** 섬광에 눈이 먼 캐릭터의 얼굴 빛 */
   private blindGlow = new BlindGlow();
+  /** 충격 상태인 캐릭터 머리 위 별 */
+  private concussMark = new ConcussMark();
   /** 던지는 동작 중: 손을 떠나는 시점에 발동 */
   private pendingThrow: { slot: AbilitySlot; variant: 0 | 1; t: number } | null = null;
   /** 막 던진 능력 (좌클릭을 누르고 있는 동안 휘게 조종) */
@@ -179,7 +182,7 @@ export class Game {
     this.scene.fog = this.fog;
     this.sunDir = new THREE.Vector3(...env.sunDirection).normalize();
     this.mapChoice = savedMapChoice() ?? RANDOM_MAP;
-    this.scene.add(this.muzzleLight, this.blindGlow.group);
+    this.scene.add(this.muzzleLight, this.blindGlow.group, this.concussMark.group);
 
     this.player = new PlayerController(this.map.collision);
     CharacterModel.ragdollWorld = this.map.collision;
@@ -515,13 +518,17 @@ export class Game {
   /** 눈이 먼 다른 캐릭터(봇·더미·온라인 상대)의 얼굴을 빛나게 */
   private updateBlindGlow(dt: number): void {
     const list: { id: string; eye: THREE.Vector3; left: number }[] = [];
-    for (const t of this.combat.targets as (import('../abilities/AbilityEffects').FacingTarget & { enabled?: boolean; model?: { root: THREE.Object3D } })[]) {
+    const conc: { id: string; head: THREE.Vector3; left: number }[] = [];
+    for (const t of this.combat.targets as (import('../abilities/AbilityEffects').FacingTarget & { enabled?: boolean; model?: CharacterModel })[]) {
       if (!t.alive || t.id === this.local.id || !t.eyePos) continue;
       if (t.enabled === false || (t.model && !t.model.root.visible)) continue;
       const left = this.abilityFx.blindLeft(t.id);
       if (left > 0) list.push({ id: t.id, eye: t.eyePos(new THREE.Vector3()), left });
+      const c = this.abilityFx.status.remaining(t.id, 'concuss');
+      if (c > 0) conc.push({ id: t.id, head: t.model ? t.model.headPosition(new THREE.Vector3()) : t.eyePos(new THREE.Vector3()), left: c });
     }
     this.blindGlow.update(dt, this.camera, list);
+    this.concussMark.update(dt, conc);
   }
 
   resetAccumulator(): void {
@@ -863,9 +870,9 @@ export class Game {
     if (conc > 0 && alive) {
       const t = performance.now() / 1000;
       const k = Math.min(1, conc);
-      this.camera.rotation.z += Math.sin(t * 6.3) * 0.035 * k;
-      this.camera.rotation.x += Math.sin(t * 4.1) * 0.02 * k;
-      this.camera.rotation.y += Math.sin(t * 3.3) * 0.02 * k;
+      this.camera.rotation.z += Math.sin(t * 6.3) * 0.06 * k;
+      this.camera.rotation.x += Math.sin(t * 4.1) * 0.035 * k;
+      this.camera.rotation.y += Math.sin(t * 3.3) * 0.035 * k;
     }
     // 화면 흔들림
     if (this.shakeAmount > 0) {

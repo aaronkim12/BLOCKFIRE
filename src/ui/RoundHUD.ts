@@ -181,7 +181,7 @@ export class RoundHUD {
       else if (d.mySide === 'defense' && planted) prompt = `Core가 ${d.core.site} 구역에 설치되었습니다 — 해체하세요`;
     }
     if (!d.alivePlayer && d.state !== 'RoundEnd' && d.state !== 'MatchEnd')
-      prompt = d.spectating ? `관전 중: <b>${d.spectating}</b> · <kbd>LMB</kbd>/<kbd>RMB</kbd> 대상 변경` : '관전 중 — 살아 있는 아군이 없습니다';
+      prompt = d.spectating === 'CORE' ? '아군 전멸 — 설치된 <b>CORE</b>를 보는 중 · 마우스로 시점 회전' : d.spectating ? `관전 중: <b>${d.spectating}</b> · 마우스로 시점 회전 · <kbd>LMB</kbd>/<kbd>RMB</kbd> 대상 변경` : '관전 중 — 살아 있는 아군이 없습니다 · 마우스로 시점 회전';
     const pr = this.q('.rh-prompt');
     pr.hidden = !prompt;
     if (prompt && pr.innerHTML !== prompt) pr.innerHTML = prompt;
