@@ -945,7 +945,7 @@ export class Game {
         this.holdFire = true;
         if (d.throwItem) {
           // 우클릭 짧게 던지기(화염구 포함)는 언더핸드, 나머지는 오버핸드
-          hand.throw(press === 1 && (!d.alt || d.effect === 'hothands'));
+          hand.throw();
           this.pendingThrow = { slot: ab.armed, variant: press, t: THROW_RELEASE };
         } else ab.fireArmed(press);
       } else if (i.wasPressed('slot1') || i.wasPressed('slot2') || i.wasPressed('slot3') || i.wasPressed('nextWeapon') || i.wasPressed('prevWeapon')) ab.armed = null;

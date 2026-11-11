@@ -51,6 +51,8 @@ export interface ViewModelInput {
  * 몸 전체를 올리면 어깨가 카메라를 가리므로, 어깨 위치는 그대로 두고 회전만 한다.
  */
 const RELOAD_RAISE = 0.32;
+/** 던지기(Toss Grenade) 동작 중 같은 방식으로 팔을 드는 각도 */
+const THROW_RAISE = 0.2;
 /** 어깨 중심 (카메라 공간) — init()의 배치와 같아야 한다 */
 const SHOULDER = new THREE.Vector3(0, -0.24, -0.08);
 const _x = new THREE.Vector3(1, 0, 0);
@@ -100,7 +102,7 @@ export class ViewModel {
     this.hemi = new THREE.HemisphereLight(0xb8c4dc, 0x6a5440, 1.6);
     this.sun = new THREE.DirectionalLight(0xffe2b8, 1.6);
     this.sun.position.set(0.5, 1, 0.3);
-    this.scene.add(this.hemi, this.sun, this.storm.group, this.abilityHand.group);
+    this.scene.add(this.hemi, this.sun, this.storm.group);
   }
 
   async init(team: Team): Promise<void> {
@@ -119,6 +121,8 @@ export class ViewModel {
     arms.weaponMount.position.copy(arms.root.position).negate().divideScalar(ARM_SCALE);
     arms.weaponMount.scale.setScalar(1 / ARM_SCALE);
     arms.calibrateHold();
+    arms.calibrateItemMount();
+    arms.itemMount.add(this.abilityHand.item);
     this.armsBase.copy(arms.root.position);
   }
 
@@ -160,10 +164,9 @@ export class ViewModel {
     const t = this.template;
     const storm = t?.def.id === 'storm';
     this.storm.group.visible = this.visible && storm;
-    // 능력을 들고 있는 동안은 무기·팔 대신 능력 손
-    this.abilityHand.update(input.dt, { x: Math.sin(this.bobPhase) * 0.01 * this.bobAmount, y: -Math.abs(Math.cos(this.bobPhase)) * 0.01 * this.bobAmount });
-    const handUp = this.abilityHand.active;
-    if (!this.visible) this.abilityHand.group.visible = false;
+    // 던지는 능력: 같은 팔 모델이 Toss Grenade 클립으로 꺼내 들고 던진다
+    this.abilityHand.update(input.dt);
+    const throwW = this.abilityHand.weight;
     if (storm) {
       this.storm.setCount(inv.current?.mag ?? 0);
       this.storm.update(input.dt);
@@ -238,7 +241,8 @@ export class ViewModel {
     // ── 재장전: 3인칭과 같은 Mixamo 장전 동작. 시작/끝 10%에서 IK 자세와 섞는다
     const rp = inv.reloadProgress;
     const animW = rp >= 0 ? smooth(Math.min(1, rp / 0.1, (1 - rp) / 0.1)) : 0;
-    const raise = RELOAD_RAISE * animW;
+    // 던지는 능력을 든 동안에도 팔을 살짝 들어 손이 화면 안에 오도록
+    const raise = RELOAD_RAISE * animW + THROW_RAISE * throwW;
     arms.root.position.copy(this.armsBase).sub(SHOULDER).applyAxisAngle(_x, raise).add(SHOULDER);
     arms.root.rotation.x = raise;
 
@@ -261,9 +265,17 @@ export class ViewModel {
     arms.weapon.root.position.copy(pos);
     arms.weapon.root.rotation.copy(rot);
     arms.updateFirstPerson(rp, animW, tap);
+    if (throwW > 0.001) {
+      arms.blendFirstPersonClip('grenade', this.abilityHand.clipTime, throwW);
+      // 들고 있는 동안 걷기 흔들림
+      arms.root.position.x += bobX * throwW;
+      arms.root.position.y += bobY * throwW;
+    }
+    // 능력을 든 동안 총은 내려 둔다
+    arms.weapon.root.visible = throwW < 0.5;
     this.flash.update(dt);
     // 저격총 정조준 시에는 조준경 화면만 보여 준다
-    arms.root.visible = this.visible && !storm && !handUp && !(def.category === 'sniper' && aim > 0.95);
+    arms.root.visible = this.visible && !storm && !(def.category === 'sniper' && aim > 0.95 && throwW < 0.01);
   }
 }
 

@@ -114,6 +114,8 @@ export class CharacterModel {
   readonly weaponMount = new THREE.Group();
   /** 3인칭: 오른손 뼈에 붙은 무기 마운트 */
   private handMount = new THREE.Group();
+  /** 1인칭: 던지는 능력 물건을 쥐는 오른손 손바닥 위치 (calibrateItemMount 후 사용) */
+  readonly itemMount = new THREE.Group();
   weapon: WeaponInstance | null = null;
 
   private bones = {} as Record<BoneKey, THREE.Bone>;
@@ -281,7 +283,7 @@ export class CharacterModel {
     this.clips = lib;
     const mixer = new THREE.AnimationMixer(body);
     this.mixer = mixer;
-    for (const name of ['idle', 'reload'] as ClipName[]) {
+    for (const name of ['idle', 'reload', 'grenade'] as ClipName[]) {
       const a = mixer.clipAction(lib.get(name)!.upper);
       a.play();
       a.setEffectiveWeight(0);
@@ -289,6 +291,56 @@ export class CharacterModel {
       this.weights.set(a, 0);
       this.upperActions.set(name, a);
     }
+  }
+
+  /**
+   * 1인칭: 오른손 손바닥 안쪽(손가락 뿌리 앞, 손바닥 쪽으로 조금)에 물건 마운트를 둔다.
+   * 마운트는 월드 크기 1 (물건 크기를 m 단위로 지정). 팔 크기를 바꾼 뒤 호출.
+   */
+  calibrateItemMount(): void {
+    this.resetPose();
+    this.root.updateMatrixWorld(true);
+    const hand = this.bones.handR;
+    const hq = hand.getWorldQuaternion(new THREE.Quaternion());
+    const f = this.handCalib.R.finger.clone().applyQuaternion(hq);
+    const p = this.handCalib.R.palm.clone().applyQuaternion(hq);
+    const pos = hand.getWorldPosition(new THREE.Vector3()).addScaledVector(f, 0.075).addScaledVector(p, 0.05);
+    const desired = new THREE.Matrix4().compose(pos, hq, new THREE.Vector3(1, 1, 1));
+    const local = hand.matrixWorld.clone().invert().multiply(desired);
+    local.decompose(this.itemMount.position, this.itemMount.quaternion, this.itemMount.scale);
+    hand.add(this.itemMount);
+  }
+
+  /**
+   * 1인칭: 지금 자세(무기 IK)를 클립 자세 쪽으로 weight만큼 섞는다.
+   * updateFirstPerson() 다음에 호출한다 (던지는 능력 — Toss Grenade).
+   */
+  blendFirstPersonClip(name: ClipName, time: number, weight: number): void {
+    if (!this.mixer || weight <= 0.001) return;
+    const act = this.upperActions.get(name);
+    if (!act) return;
+    const ik = new Map<THREE.Bone, THREE.Quaternion>();
+    for (const b of this.rest.keys()) ik.set(b, b.quaternion.clone());
+    this.resetPose();
+    for (const a of this.weights.keys()) a.setEffectiveWeight(a === act ? 1 : 0);
+    this.applyClipAt(act, Math.min(time, this.clips.get(name)!.duration - 0.001));
+    for (const [b, q] of ik) {
+      const target = b.quaternion.clone();
+      b.quaternion.copy(q).slerp(target, weight);
+    }
+    act.setEffectiveWeight(0);
+  }
+
+  /**
+   * 클립의 한 시점 자세를 뼈에 확실히 적용한다.
+   * AnimationMixer는 직전 프레임과 같은 값이면 뼈에 쓰지 않는데, resetPose()가 뼈를 바꿔 놓으므로
+   * 같은 시점을 연속으로 적용하면(멈춘 화면, 일시정지) 기본 자세로 남는다 → 살짝 다른 시점을 먼저 적용.
+   */
+  private applyClipAt(act: THREE.AnimationAction, time: number): void {
+    act.time = time + 1e-3;
+    this.mixer!.update(0);
+    act.time = time;
+    this.mixer!.update(0);
   }
 
   /** 크기를 바꾼 뒤 손에 쥐는 무기 위치를 다시 계산 (1인칭) */
@@ -581,8 +633,7 @@ export class CharacterModel {
       this.resetPose();
       const act = this.upperActions.get('reload')!;
       for (const a of this.weights.keys()) a.setEffectiveWeight(a === act ? 1 : 0);
-      act.time = Math.min(1, reload) * this.clips.get('reload')!.duration * 0.98;
-      this.mixer.update(0);
+      this.applyClipAt(act, Math.min(1, reload) * this.clips.get('reload')!.duration * 0.98);
       this.root.updateMatrixWorld(true);
       anim = new Map();
       for (const b of this.rest.keys()) anim.set(b, b.quaternion.clone());
