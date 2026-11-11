@@ -1,0 +1,14 @@
+# Render 블루프린트: 온라인 서버 (무료 요금제, 싱가포르)
+# 게임 화면은 Firebase Hosting(web.app)이 내보내고, 여기서는 WebSocket 서버만 돌린다.
+services:
+  - type: web
+    name: blockfire-server
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"

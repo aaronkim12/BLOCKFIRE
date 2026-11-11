@@ -1,0 +1,33 @@
+{
+  "name": "blockfire",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BLOCKFIRE - PSX retro tactical FPS for the web",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server",
+    "build:server": "vite build --ssr server/main.ts --outDir dist-server --emptyOutDir",
+    "server": "npm run build:server && node dist-server/main.js",
+    "start": "node dist-server/main.js",
+    "build:all": "npm run build && npm run build:server",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting"
+  },
+  "dependencies": {
+    "three": "^0.187.0",
+    "tone": "^15.1.22",
+    "ws": "^8.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/three": "^0.187.0",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
