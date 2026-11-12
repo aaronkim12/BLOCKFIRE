@@ -36,6 +36,9 @@ export class PSXRenderer {
     this.renderer.localClippingEnabled = true;
     // 필터링 없는 저해상도 그림자 → 계단 현상이 그대로 보이는 PSX풍 그림자
     this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    // 그림자 맵은 Game이 정한 주기(초당 30번, 성능 모드 15번)로만 다시 그린다
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
 
     this.target = new THREE.WebGLRenderTarget(1, 1, {
       minFilter: THREE.NearestFilter,
@@ -128,13 +131,23 @@ void main() {
     return this.postMaterial.uniforms.uResolution.value as THREE.Vector2;
   }
 
+  /** 성능 모드: 렌더 픽셀을 최소 3배로 키우고 고DPI 배율을 쓰지 않는다 */
+  private low = false;
+
+  setLowSpec(low: boolean): void {
+    if (this.low === low) return;
+    this.low = low;
+    this.renderer.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.resize();
+  }
+
   resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     // 픽셀 배율은 CSS 픽셀 기준 (고DPI 화면에서도 같은 크기의 픽셀로 보이도록)
-    const scale = Math.max(1, this.settings.pixelScale);
-    const pr = this.settings.pixelScale <= 1 ? this.renderer.getPixelRatio() : 1;
+    const scale = Math.max(1, this.settings.pixelScale, this.low ? 3 : 1);
+    const pr = scale <= 1 ? this.renderer.getPixelRatio() : 1;
     const iw = Math.max(1, Math.floor((w * pr) / scale));
     const ih = Math.max(1, Math.floor((h * pr) / scale));
     this.target.setSize(iw, ih);

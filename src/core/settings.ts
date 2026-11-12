@@ -94,6 +94,11 @@ export interface Settings {
   showDebug: boolean;
   /** 효과음 음량 0..1 */
   volume: number;
+  /**
+   * 성능 모드 (저사양 기기·크롬북): 렌더 해상도·그림자·입자 품질을 낮춘다.
+   * auto = 크롬북이거나 프레임이 계속 낮으면 자동으로 켬
+   */
+  performance: 'auto' | 'high' | 'low';
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -104,6 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   psx: { ...GRAPHICS_PRESETS.modern },
   showDebug: true,
   volume: 0.6,
+  performance: 'auto',
 };
 
 // v2: PSX 설정 형식 변경 (renderHeight → pixelScale, 효과 단계화)

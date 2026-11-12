@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { SimplifyModifier } from 'three/examples/jsm/modifiers/SimplifyModifier.js';
 import { loadFBX } from '../core/Assets';
 import { createPSXMaterial } from '../graphics/PSXMaterial';
 import { instantiateWeapon, type WeaponInstance, type WeaponTemplate } from '../weapons/WeaponModels';
@@ -125,6 +127,35 @@ const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
+/**
+ * Y Bot 형상 최적화 (원본 1회 → 캐시)
+ *   fp: 같은 위치·속성의 정점을 합쳐 인덱스 형상으로 (모양은 그대로, 정점 수 크게 감소)
+ *   tp: 거기에 더해 정점의 약 80%를 줄인 단순화 형상 (PSX 해상도에서는 차이가 거의 안 보임)
+ */
+const geoCache = new Map<string, Promise<Map<THREE.BufferGeometry, THREE.BufferGeometry>>>();
+function optimizedGeometries(src: THREE.Object3D, kind: 'fp' | 'tp'): Promise<Map<THREE.BufferGeometry, THREE.BufferGeometry>> {
+  let p = geoCache.get(kind);
+  if (!p) {
+    p = (async () => {
+      const out = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+      const meshes: THREE.Mesh[] = [];
+      src.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+      });
+      for (const m of meshes) {
+        let g = mergeVertices(m.geometry, 1e-4);
+        if (kind === 'tp') g = await new SimplifyModifier().modify(g, Math.floor(g.attributes.position.count * 0.8));
+        g.computeBoundingSphere();
+        g.computeBoundingBox();
+        out.set(m.geometry, g);
+      }
+      return out;
+    })();
+    geoCache.set(kind, p);
+  }
+  return p;
+}
+
 export class CharacterModel {
   /** 발바닥 원점, rotation.y = yaw */
   readonly root = new THREE.Group();
@@ -160,6 +191,15 @@ export class CharacterModel {
   private gaitPhase = 0;
   private airTime = 0;
   private leftIK = 1;
+
+  /**
+   * 화면 밖이거나 먼 캐릭터는 자세(애니메이션·IK)를 몇 프레임에 한 번만 계산한다 (Game이 매 프레임 지정).
+   * low = 성능 모드 (더 드물게)
+   */
+  static lod: { frustum: THREE.Frustum; cam: THREE.Vector3; low: boolean } | null = null;
+  private lodAcc = 0;
+  private lodTick = 0;
+  private static _sphere = new THREE.Sphere();
 
   /** 래그돌이 부딪힐 맵 충돌 (클라이언트에서 Game이 지정) */
   static ragdollWorld: CollisionWorld | null = null;
@@ -218,7 +258,13 @@ export class CharacterModel {
    */
   static async create(opts: { team: Team | null; firstPerson?: boolean; white?: boolean }): Promise<CharacterModel> {
     const src = await loadFBX('assets/characters/YBot.fbx');
+    const geos = await optimizedGeometries(src, opts.firstPerson ? 'fp' : 'tp');
     const body = cloneSkinned(src);
+    // 가벼운 형상으로 교체 (원본은 삼각형마다 정점이 따로라 캐릭터 하나에 정점 16만 개)
+    body.traverse((o) => {
+      const m = o as THREE.SkinnedMesh;
+      if (m.isMesh) m.geometry = geos.get(m.geometry) ?? m.geometry;
+    });
     body.scale.multiplyScalar(0.01); // cm → m
     const bodyMat = createPSXMaterial({ color: BODY_COLOR[opts.white ? 'white' : opts.team ?? 'white'] });
     const jointMat = createPSXMaterial({ color: JOINT_COLOR });
@@ -475,6 +521,21 @@ export class CharacterModel {
 
   update(dt: number, pose: CharacterPose): void {
     if (!this.mixer) return;
+    const lod = CharacterModel.lod;
+    if (lod) {
+      this.lodAcc += dt;
+      const p = this.root.position;
+      const sph = CharacterModel._sphere;
+      sph.center.set(p.x, p.y + 1, p.z);
+      sph.radius = 1.6;
+      const onScreen = lod.frustum.intersectsSphere(sph);
+      const d2 = lod.cam.distanceToSquared(p);
+      const every = !onScreen ? (lod.low ? 6 : 4) : d2 > 35 * 35 ? (lod.low ? 3 : 2) : d2 > 18 * 18 && lod.low ? 2 : 1;
+      this.lodTick = (this.lodTick + 1) % every;
+      if (this.lodTick !== 0) return;
+      dt = Math.min(this.lodAcc, 0.2);
+      this.lodAcc = 0;
+    }
     const B = this.bones;
     const F = new THREE.Vector3(0, 0, -1).applyQuaternion(this.root.quaternion);
     const R = new THREE.Vector3(1, 0, 0).applyQuaternion(this.root.quaternion);

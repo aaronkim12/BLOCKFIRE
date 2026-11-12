@@ -30,6 +30,9 @@ const HIP: Record<WeaponCategory, [number, number, number]> = {
 
 const ARM_SCALE = 1.3;
 
+/** 3인칭 무기 재질 → 1인칭 전용 복제 */
+const FP_MATERIALS = new WeakMap<THREE.Material, THREE.Material>();
+
 export interface ViewModelInput {
   dt: number;
   /** 수평 이동 속도 (m/s) */
@@ -135,6 +138,17 @@ export class ViewModel {
     if (!this.arms) return;
     this.template = template;
     this.arms.setWeapon(template);
+    // 3인칭 무기와 재질을 공유하면 장면(조명·안개)이 달라 매 프레임 셰이더 상태를 다시 검사한다 → 1인칭 전용 복제
+    this.arms.weapon?.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const own = (mat: THREE.Material) => {
+        let c = FP_MATERIALS.get(mat);
+        if (!c) FP_MATERIALS.set(mat, (c = mat.clone()));
+        return c;
+      };
+      m.material = Array.isArray(m.material) ? m.material.map(own) : own(m.material);
+    });
     this.flash.object.removeFromParent();
     if (this.arms.weapon && template?.def.category !== 'melee') this.arms.weapon.muzzle.add(this.flash.object);
   }

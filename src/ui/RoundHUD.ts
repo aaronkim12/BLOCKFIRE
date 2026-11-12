@@ -74,8 +74,8 @@ export class RoundHUD {
   banner(title: string, sub: string, kind: 'win' | 'loss' | 'info' | 'alert'): void {
     const b = this.q('.rh-banner');
     b.className = `rh-banner ${kind}`;
-    b.querySelector('h2')!.textContent = title;
-    b.querySelector('p')!.textContent = sub;
+    setText(b.querySelector('h2')!, title);
+    setText(b.querySelector('p')!, sub);
     b.hidden = false;
     // 애니메이션 재시작
     b.style.animation = 'none';
@@ -90,8 +90,8 @@ export class RoundHUD {
     const e = this.q('.rh-end');
     e.hidden = false;
     e.className = `rh-end ${won ? 'win' : 'loss'}`;
-    e.querySelector('h1')!.textContent = won ? 'VICTORY' : 'DEFEAT';
-    this.q('.rh-end-score').textContent = `${mine} : ${theirs}`;
+    setText(e.querySelector('h1')!, won ? 'VICTORY' : 'DEFEAT');
+    setText(this.q('.rh-end-score'), `${mine} : ${theirs}`);
   }
 
   setScoreboard(visible: boolean): void {
@@ -108,7 +108,7 @@ export class RoundHUD {
     // ── 상단: 점수 / 시간 / 생존 인원
     const teams = this.root.querySelectorAll<HTMLElement>('.rh-team');
     const fill = (el: HTMLElement, team: TeamId) => {
-      el.querySelector('.rh-score')!.textContent = String(d.score[team]);
+      setText(el.querySelector('.rh-score')!, String(d.score[team]));
       const pips = el.querySelector('.rh-pips')!;
       const want = d.teamSize[team];
       if (pips.children.length !== want) pips.innerHTML = '<i></i>'.repeat(want);
@@ -124,7 +124,7 @@ export class RoundHUD {
     const icon = this.q('.rh-core-icon');
     icon.hidden = !planted;
     time.hidden = planted;
-    time.textContent = fmt(d.timeLeft);
+    setText(time, fmt(d.timeLeft));
     time.classList.toggle('low', d.state === 'ActiveRound' && d.timeLeft <= 10);
     const sub: Record<RoundState, string> = {
       Waiting: 'WAITING',
@@ -136,7 +136,7 @@ export class RoundHUD {
       RoundEnd: `ROUND ${d.round}`,
       MatchEnd: 'MATCH END',
     };
-    this.q('.rh-sub').textContent = `${sub[d.state]} · ${d.mySide === 'attack' ? 'ATK' : 'DEF'}`;
+    setText(this.q('.rh-sub'), `${sub[d.state]} · ${d.mySide === 'attack' ? 'ATK' : 'DEF'}`);
 
     // ── 배너
     if (this.bannerTimer > 0) {
@@ -145,7 +145,7 @@ export class RoundHUD {
     }
 
     // ── 크레딧 / 보상 내역 (라운드 종료 ~ 구매 단계)
-    this.q('.rh-credits b').textContent = d.credits.toLocaleString();
+    setText(this.q('.rh-credits b'), d.credits.toLocaleString());
     // 라운드 중에 늘어난 크레딧(처치·설치)은 옆에 잠깐 +금액
     if (this.lastCredits >= 0 && d.credits > this.lastCredits && d.state !== 'RoundEnd' && d.state !== 'BuyPhase') {
       this.gain += d.credits - this.lastCredits;
@@ -156,7 +156,7 @@ export class RoundHUD {
     if (this.gainTimer > 0) {
       this.gainTimer -= dt;
       gainEl.hidden = false;
-      gainEl.textContent = `+${this.gain}`;
+      setText(gainEl, `+${this.gain}`);
       if (this.gainTimer <= 0) this.gain = 0;
     } else gainEl.hidden = true;
     const rw = this.q('.rh-rewards');
@@ -190,7 +190,7 @@ export class RoundHUD {
     const bar = this.q('.rh-progress');
     bar.hidden = d.progress < 0;
     if (d.progress >= 0) {
-      bar.querySelector('span')!.textContent = `${d.progressLabel} ${Math.floor(d.progress * 100)}%`;
+      setText(bar.querySelector('span')!, `${d.progressLabel} ${Math.floor(d.progress * 100)}%`);
       (bar.querySelector('i') as HTMLElement).style.width = `${d.progress * 100}%`;
       const cp = bar.querySelector('em') as HTMLElement;
       cp.hidden = d.progressLabel.includes('해체') ? d.config.defuseCheckpoint <= 0 : true;
@@ -219,4 +219,10 @@ export class RoundHUD {
   dispose(): void {
     this.root.remove();
   }
+}
+
+/** 값이 바뀔 때만 DOM 글자를 고친다 (매 프레임 같은 값을 써도 화면 재계산이 일어남) */
+function setText(el: Element, v: string | number): void {
+  const s = String(v);
+  if (el.textContent !== s) el.textContent = s;
 }

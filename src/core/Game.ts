@@ -114,6 +114,13 @@ export class Game {
   private fog: THREE.Fog;
   private sky: THREE.Object3D | undefined;
   private frameTimes: number[] = [];
+  /** 성능 모드 적용 중 */
+  lowSpec = false;
+  private shadowAcc = 0;
+  /** 자동 성능 모드: 프레임이 낮은 상태가 이어진 시간 */
+  private slowTime = 0;
+  private lodFrustum = new THREE.Frustum();
+  private lodMatrix = new THREE.Matrix4();
   private zoom = 1;
   private fireKick = 0;
   private muzzleLight = new THREE.PointLight(0xffd090, 0, 9, 1.6);
@@ -183,6 +190,9 @@ export class Game {
     this.sunDir = new THREE.Vector3(...env.sunDirection).normalize();
     this.mapChoice = savedMapChoice() ?? RANDOM_MAP;
     this.scene.add(this.muzzleLight, this.blindGlow.group, this.concussMark.group);
+    // 장면 행렬은 프레임마다 한 번만 갱신 (렌더 패스마다 다시 계산하지 않게)
+    this.scene.matrixWorldAutoUpdate = false;
+    CharacterModel.lod = { frustum: this.lodFrustum, cam: new THREE.Vector3(), low: false };
 
     this.player = new PlayerController(this.map.collision);
     CharacterModel.ragdollWorld = this.map.collision;
@@ -394,6 +404,7 @@ export class Game {
     this.applySettings();
     this.bots?.setMap();
     this.practice?.layout(def);
+    this.applyShadowQuality();
     this.menu.refresh();
   }
 
@@ -720,6 +731,7 @@ export class Game {
     const dt = Math.min(0.25, (now - this.lastTime) / 1000);
     this.lastTime = now;
     this.trackFps(dt);
+    this.updatePerformance(dt);
 
     if (this.state === 'playing') this.updatePlaying(dt);
     else if (this.state === 'menu' || this.state === 'loading') this.updateMenuCamera(dt);
@@ -753,11 +765,19 @@ export class Game {
     // 깊이 사전 패스(입자·능력 효과 제외) → 본 패스. 입자가 벽·바닥과 만나는 곳이 부드럽게 흐려짐
     // (입자가 하나도 없으면 사전 패스를 건너뜀)
     const fx = this.effects;
+    // 그림자 맵: 초당 30번 (성능 모드 15번)
+    this.shadowAcc += dt;
+    if (this.shadowAcc >= (this.lowSpec ? 1 / 15 : 1 / 30)) {
+      this.shadowAcc = 0;
+      this.psx.renderer.shadowMap.needsUpdate = true;
+    }
+    this.scene.updateMatrixWorld();
     this.psx.render(
       this.scene,
       this.camera,
       showViewModel ? this.viewModel : undefined,
-      fx.smoke.active + fx.glow.active > 0 ? { hide: [fx.group, this.abilityFx.group] } : undefined,
+      // 성능 모드에서는 입자용 깊이 사전 패스(장면을 한 번 더 그림)를 생략
+      !this.lowSpec && fx.smoke.active + fx.glow.active > 0 ? { hide: [fx.group, this.abilityFx.group] } : undefined,
     );
 
     if (this.state === 'playing' || this.state === 'paused') this.hud.update(this, this.averageFps());
@@ -804,6 +824,8 @@ export class Game {
 
     // ── 무기 / 전투
     if (alive) this.inventory.update(dt, this.readWeaponControls());
+    // 죽으면 조준(저격 조준경·확대)을 바로 푼다 — 관전 화면에 조준경이 남지 않게
+    else this.inventory.aim = 0;
     // 투척 단검: 우클릭 = 남은 단검을 0.33초 간격으로 모두
     if (alive && this.stormActive && !this.abilities.armed && this.input.wasPressed('aim') && !this.match?.weaponsLocked) this.stormFan();
     const w = this.inventory.current;
@@ -1212,6 +1234,63 @@ export class Game {
     this.camera.lookAt(0, 0, 0);
   }
 
+  /**
+   * 성능 관련 매 프레임 처리
+   *   - 쓰지 않는 캐릭터 묶음(경기 중 연습 더미 / 연습 중 봇)은 장면에서 빼서 행렬 계산을 아낀다
+   *   - 캐릭터 자세 LOD용 시야 정보
+   *   - 자동 성능 모드: 경기 중 평균 프레임이 4초 넘게 40fps 아래면 성능 모드로
+   */
+  private updatePerformance(dt: number): void {
+    const attach = (o: THREE.Object3D | undefined, on: boolean) => {
+      if (!o) return;
+      if (on && !o.parent) this.scene.add(o);
+      else if (!on && o.parent === this.scene) this.scene.remove(o);
+    };
+    attach(this.practice?.group, this.mode === 'practice');
+    attach(this.bots?.group, this.mode === 'match');
+
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    this.lodMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    this.lodFrustum.setFromProjectionMatrix(this.lodMatrix);
+    const lod = CharacterModel.lod!;
+    lod.cam.copy(cam.position);
+    lod.low = this.lowSpec;
+
+    const mode = this.settings.performance;
+    let want = mode === 'low' || (mode === 'auto' && (this.autoLow || isLowEndDevice()));
+    if (mode === 'auto' && !want && this.state === 'playing' && this.frameTimes.length >= 60) {
+      this.slowTime = this.averageFps() < 40 ? this.slowTime + dt : 0;
+      if (this.slowTime > 4) {
+        this.slowTime = 0;
+        this.autoLow = true;
+        want = true;
+      }
+    }
+    if (want !== this.lowSpec) this.setLowSpec(want);
+  }
+
+  /** 자동 성능 모드가 프레임 저하로 켜졌음 */
+  private autoLow = false;
+
+  /** 성능 모드 켜기/끄기: 렌더 해상도·그림자 해상도 */
+  setLowSpec(low: boolean): void {
+    this.lowSpec = low;
+    this.psx.setLowSpec(low);
+    this.applyShadowQuality();
+  }
+
+  private applyShadowQuality(): void {
+    const sh = this.map.sun.shadow;
+    const size = this.lowSpec ? 1024 : 2048;
+    if (sh.mapSize.x !== size) {
+      sh.mapSize.set(size, size);
+      sh.map?.dispose();
+      sh.map = null;
+    }
+    this.psx.renderer.shadowMap.needsUpdate = true;
+  }
+
   private trackFps(dt: number): void {
     this.frameTimes.push(dt);
     if (this.frameTimes.length > 60) this.frameTimes.shift();
@@ -1221,4 +1300,10 @@ export class Game {
     const sum = this.frameTimes.reduce((a, b) => a + b, 0);
     return sum > 0 ? this.frameTimes.length / sum : 0;
   }
+}
+
+/** 크롬북 또는 코어 2개 이하 기기 */
+function isLowEndDevice(): boolean {
+  const ua = navigator.userAgent;
+  return /CrOS/.test(ua) || (navigator.hardwareConcurrency ?? 8) <= 2;
 }

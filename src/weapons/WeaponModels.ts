@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { loadFBX } from '../core/Assets';
 import { createPSXMaterial } from '../graphics/PSXMaterial';
 import { createCoreDevice } from '../objective/CoreModel';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { WeaponDef } from './weaponData';
 
 /**
@@ -137,12 +138,53 @@ async function buildTemplate(def: WeaponDef): Promise<WeaponTemplate> {
   support.sub(grip);
   const object = new THREE.Group();
   object.name = `weapon:${def.id}`;
-  object.add(model);
+  object.add(bakeWeapon(model));
   object.updateMatrixWorld(true);
 
   const bounds = new THREE.Box3().setFromObject(object);
   const muzzle = findMuzzle(object, bounds);
   return { def, object, muzzle, support, bounds };
+}
+
+/**
+ * 무기 모델을 메시 하나·재질 하나로 굽는다.
+ * 원본은 부품·색마다 재질이 나뉘어 총 한 자루가 그리기 호출 20~30번이었다 (봇 9명이면 수백 번).
+ * 재질은 단색이므로 색을 정점 색으로 옮기고 형상을 합친다 → 총 한 자루 = 그리기 호출 1번.
+ */
+function bakeWeapon(model: THREE.Object3D): THREE.Mesh {
+  model.updateMatrixWorld(true);
+  const parts: THREE.BufferGeometry[] = [];
+  const c = new THREE.Color();
+  model.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const src = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+    const n = src.attributes.position.count;
+    const colors = new Float32Array(n * 3);
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const groups = src.groups.length ? src.groups : [{ start: 0, count: n, materialIndex: 0 }];
+    for (const g of groups) {
+      const m = mats[g.materialIndex ?? 0] as THREE.MeshLambertMaterial | undefined;
+      c.copy(m?.color ?? new THREE.Color(0x808080));
+      for (let i = g.start; i < Math.min(n, g.start + g.count); i++) colors.set([c.r, c.g, c.b], i * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', src.attributes.position.clone());
+    if (src.attributes.normal) geo.setAttribute('normal', src.attributes.normal.clone());
+    else geo.computeVertexNormals();
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.applyMatrix4(mesh.matrixWorld);
+    parts.push(geo);
+  });
+  const merged = mergeGeometries(parts, false);
+  if (!merged) throw new Error('무기 형상 병합 실패');
+  const mat = createPSXMaterial({ color: 0xffffff });
+  mat.vertexColors = true;
+  const out = new THREE.Mesh(merged, mat);
+  out.name = 'weapon-mesh';
+  out.castShadow = true;
+  out.receiveShadow = false;
+  return out;
 }
 
 /** 모든 정점을 무기 공간 좌표로 순회 */

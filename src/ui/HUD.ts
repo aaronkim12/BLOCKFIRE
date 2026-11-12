@@ -221,7 +221,7 @@ export class HUD {
         return;
       }
       e.style.display = '';
-      e.textContent = b.name;
+      setText(e, b.name);
       e.style.left = `${((p.x + 1) / 2) * window.innerWidth}px`;
       e.style.top = `${((1 - p.y) / 2) * window.innerHeight}px`;
       e.style.opacity = dist > 40 ? '0.55' : '0.9';
@@ -247,7 +247,7 @@ export class HUD {
   addDamageNumber(pos: THREE.Vector3, amount: number, part: HitPart): void {
     const el = document.createElement('div');
     el.className = `dmg-num ${part}`;
-    el.textContent = String(amount);
+    setText(el, String(amount));
     this.numbersLayer.appendChild(el);
     this.numbers.push({ el, pos: pos.clone(), age: 0 });
     if (this.numbers.length > 20) this.numbers.shift()!.el.remove();
@@ -257,9 +257,9 @@ export class HUD {
     const el = document.createElement('div');
     el.className = `kill ${mine ? 'mine' : ''}`;
     el.innerHTML = `<span class="k"></span><i></i><span class="v"></span>`;
-    el.querySelector('.k')!.textContent = killer;
-    el.querySelector('i')!.textContent = head ? `${weapon} ◎` : weapon;
-    el.querySelector('.v')!.textContent = victim;
+    setText(el.querySelector('.k')!, killer);
+    setText(el.querySelector('i')!, head ? `${weapon} ◎` : weapon);
+    setText(el.querySelector('.v')!, victim);
     this.killfeed.prepend(el);
     while (this.killfeed.children.length > 5) this.killfeed.lastElementChild!.remove();
     setTimeout(() => el.classList.add('fade'), 4500);
@@ -283,7 +283,7 @@ export class HUD {
     const local = game.local;
 
     // ── 조준경 / 조준점 (탄 퍼짐에 따라 벌어짐)
-    const scoped = !!w && w.def.category === 'sniper' && inv.aim > 0.95;
+    const scoped = !!w && local.alive && w.def.category === 'sniper' && inv.aim > 0.95;
     this.scope.hidden = !scoped;
     this.crosshair.hidden = scoped || !local.alive || (inv.aim > 0.5 && w?.def.category !== 'sniper');
     const vfov = THREE.MathUtils.degToRad(game.camera.fov);
@@ -297,9 +297,9 @@ export class HUD {
     }
 
     // ── 체력 / 방어구
-    this.health.textContent = String(Math.max(0, Math.round(local.vitals.health)));
+    setText(this.health, String(Math.max(0, Math.round(local.vitals.health))));
     this.health.parentElement!.classList.toggle('low', local.vitals.health <= 30);
-    this.armor.textContent = String(Math.round(local.vitals.armor));
+    setText(this.armor, String(Math.round(local.vitals.armor)));
 
     // ── 피격 방향: 화면 중심 기준으로 공격자 쪽에 붉은 호
     if (this.damageTimer > 0) {
@@ -353,14 +353,14 @@ export class HUD {
     this.death.hidden = local.alive;
     if (!local.alive) {
       const inMatch = game.mode === 'match';
-      this.death.querySelector('p')!.textContent = inMatch ? '다음 라운드에 부활합니다' : `${local.respawnIn.toFixed(1)}초 후 부활`;
+      setText(this.death.querySelector('p')!, inMatch ? '다음 라운드에 부활합니다' : `${local.respawnIn.toFixed(1)}초 후 부활`);
       // 경기에서는 1.5초 뒤 관전 화면을 가리지 않도록 작게 위로
       this.death.classList.toggle('compact', inMatch && local.deadTime > 1.5);
     }
 
     // ── 무기 / 탄약
     if (w) {
-      this.weaponName.textContent = w.def.name;
+      setText(this.weaponName, w.def.name);
       this.ammo.innerHTML =
         w.def.magazine > 0
           ? `<b class="${w.mag === 0 ? 'empty' : w.mag <= w.def.magazine * 0.25 ? 'low' : ''}">${w.mag}</b><span>/ ${inv.infiniteAmmo ? '∞' : w.reserve}</span>`
@@ -376,7 +376,7 @@ export class HUD {
         })
         .join('');
     }
-    this.status.textContent = inv.state === 'reloading' ? 'RELOADING' : '';
+    setText(this.status, inv.state === 'reloading' ? 'RELOADING' : '');
 
     // ── 디버그
     if (this.debug.hidden || now - this.lastDebugUpdate < 100) return;
@@ -394,4 +394,10 @@ export class HUD {
       `SPRD  ${THREE.MathUtils.radToDeg(local.spread).toFixed(2)}°  RCL ${THREE.MathUtils.radToDeg(local.recoil.pitch).toFixed(2)}°\n` +
       (game.practice ? `\nSHOWCASE ${game.practice.showcaseLabel}` : '');
   }
+}
+
+/** 값이 바뀔 때만 DOM 글자를 고친다 (매 프레임 같은 값을 써도 화면 재계산이 일어남) */
+function setText(el: Element, v: string | number): void {
+  const s = String(v);
+  if (el.textContent !== s) el.textContent = s;
 }

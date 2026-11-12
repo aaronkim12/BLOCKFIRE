@@ -285,6 +285,14 @@ export class Menu {
       this.buildSettings();
     });
     addRow('그래픽 프리셋', presetSel);
+    const perf = document.createElement('select');
+    for (const [id, label] of [['auto', '자동 (크롬북·프레임 낮으면 켬)'], ['low', '켬 (저사양)'], ['high', '끔 (고품질)']] as const)
+      perf.add(new Option(label, id, false, s.performance === id));
+    perf.addEventListener('change', () => {
+      s.performance = perf.value as 'auto' | 'high' | 'low';
+      apply();
+    });
+    addRow('성능 모드', perf);
     const levels: [string, number][] = [['끔', 0], ['약하게', 1], ['강하게', 2]];
     addRow(
       '픽셀 크기',
