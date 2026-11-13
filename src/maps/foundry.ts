@@ -9,7 +9,8 @@ export const FOUNDRY: MapDefinition = {
   id: 'foundry',
   name: 'FOUNDRY',
   blurb: '노을 진 주조 공장 · 중앙 실내 건물',
-  cellSize: 3,
+  // 칸 하나 3.75m (처음 3m에서 25% 키움 — 맵이 좁다는 의견)
+  cellSize: 3.75,
   wallHeight: 6,
   roofHeight: 4,
   platformHeight: 1.6,

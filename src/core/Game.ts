@@ -369,6 +369,7 @@ export class Game {
     const weapons = Promise.all(WEAPONS.map(loadWeaponTemplate));
     const [, , practice] = await Promise.all([this.viewModel.init('attack'), this.sound.load(), PracticeDummies.create()]);
     this.practice = practice;
+    practice.layout(this.map.def);
     this.scene.add(practice.group);
     for (const d of practice.dummies) this.combat.addTarget(d);
     await weapons;
@@ -1281,7 +1282,7 @@ export class Game {
   private updateMenuCamera(dt: number): void {
     this.menuTime += dt;
     const t = this.menuTime * 0.05;
-    const r = 34;
+    const r = 42;
     this.camera.position.set(Math.sin(t) * r, 22, Math.cos(t) * r);
     this.camera.lookAt(0, 0, 0);
   }

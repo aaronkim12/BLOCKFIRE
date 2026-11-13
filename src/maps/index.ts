@@ -1,9 +1,10 @@
 import { DRYDOCK } from './drydock';
 import { FOUNDRY } from './foundry';
+import { MERIDIAN } from './meridian';
 import type { MapDefinition } from './MapData';
 
 /** 플레이할 수 있는 맵 목록 */
-export const MAPS: MapDefinition[] = [FOUNDRY, DRYDOCK];
+export const MAPS: MapDefinition[] = [FOUNDRY, DRYDOCK, MERIDIAN];
 
 /** 맵 선택: 맵 id 또는 'random' */
 export type MapChoice = string;

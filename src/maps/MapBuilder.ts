@@ -437,12 +437,12 @@ export class MapBuilder {
           case 'C': {
             // 큰 상자 + 옆의 작은 상자 (작은 상자를 밟고 올라갈 수 있다)
             this.addBox(
-              { minX: x0 + 0.2, maxX: x0 + 2.2, minY: 0, maxY: 2.0, minZ: z0 + 0.2, maxZ: z0 + 2.2 },
+              { minX: x0 + 0.2, maxX: x0 + cs * 0.73, minY: 0, maxY: 2.0, minZ: z0 + 0.2, maxZ: z0 + cs * 0.73 },
               'crate',
               { uv: 'box' },
             );
             this.addBox(
-              { minX: x0 + 2.2, maxX: x0 + 3.0, minY: 0, maxY: 1.0, minZ: z0 + 1.4, maxZ: z0 + 2.2 },
+              { minX: x0 + cs * 0.73, maxX: x0 + cs, minY: 0, maxY: 1.0, minZ: z0 + cs * 0.47, maxZ: z0 + cs * 0.73 },
               'crate',
               { uv: 'box' },
             );
