@@ -76,7 +76,7 @@ export const WEAPONS: WeaponDef[] = [
   W({
     id: 'ripper', name: 'RIPPER', category: 'sidearm', slot: 2, model: 'assets/weapons/Shotgun_SawedOff.fbx',
     length: 0.42, hold: { grip: [0.15, 0.38], support: [0.62, 0.62] }, price: 300, fireRate: 3.3, automatic: false, magazine: 2, reserve: 10,
-    reloadTime: 1.75, equipTime: 0.75, adsZoom: 1, kick: 2,
+    reloadTime: 1.75, equipTime: 0.75, adsZoom: 1.08, kick: 2,
     damage: { head: 22, body: 11, leg: 9 }, falloff: [[7, 1], [15, 0.5]], pellets: 15,
     spread: 4, moveSpread: 0.5, penetration: 'low',
   }),
@@ -99,14 +99,14 @@ export const WEAPONS: WeaponDef[] = [
   W({
     id: 'breach', name: 'BREACH', category: 'shotgun', slot: 1, model: 'assets/weapons/Shotgun_1.fbx',
     length: 0.95, hold: { grip: [0.28, 0.52], support: [0.67, 0.6] }, price: 850, fireRate: 1.1, automatic: false, magazine: 5, reserve: 10,
-    reloadTime: 2.5, equipTime: 1, adsZoom: 1, kick: 2.2,
+    reloadTime: 2.5, equipTime: 1, adsZoom: 1.1, kick: 2.2,
     damage: { head: 40, body: 20, leg: 17 }, falloff: [[8, 1], [12, 0.6]], pellets: 15,
     spread: 2.6, moveSpread: 0.5, penetration: 'low',
   }),
   W({
     id: 'slugger', name: 'SLUGGER', category: 'shotgun', slot: 1, model: 'assets/weapons/Shotgun_ShortStock.fbx',
     length: 0.8, hold: { grip: [0.2, 0.54], support: [0.79, 0.65] }, price: 1850, fireRate: 3.5, automatic: true, magazine: 7, reserve: 14,
-    reloadTime: 2.2, equipTime: 1, adsZoom: 1, kick: 1.6,
+    reloadTime: 2.2, equipTime: 1, adsZoom: 1.1, kick: 1.6,
     damage: { head: 34, body: 17, leg: 14 }, falloff: [[10, 1], [15, 0.7]], pellets: 12,
     spread: 2.25, moveSpread: 0.5, penetration: 'medium',
   }),

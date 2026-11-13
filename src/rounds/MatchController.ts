@@ -12,6 +12,8 @@ import { RoundHUD } from '../ui/RoundHUD';
 import { Economy } from '../economy/Economy';
 import type { MatchConfig } from './matchConfig';
 import { CORE_VIEW_DIST, orbitCamera, SPECTATE_DIST, SPECTATE_PITCH } from './SpectateCam';
+import { FloorWeapons, type FloorWeapon } from './FloorWeapons';
+import { loadWeaponTemplate } from '../weapons/WeaponModels';
 import { RoundManager, type RoundState, type Side, type SiteId, type TeamId, type Vec3 } from './RoundManager';
 
 /**
@@ -55,6 +57,13 @@ export class MatchController {
   private pickupLock = false;
   private dropCooldown = 0;
   private allies = new Map<string, SpectateView>();
+  /** 바닥에 떨어진 무기 */
+  readonly floor: FloorWeapons;
+  /** 가까이 있는 바닥 무기 이름 (E로 바꿔 들기 안내) */
+  private pickupName: string | null = null;
+  private prevInteract = false;
+  /** 지난 라운드 승리 팀 (이긴 팀은 죽었어도 산 총을 가져간다) */
+  private lastWinner: TeamId | null = null;
   private spectateId: string | null = null;
   private spectateAngle = 0;
 
@@ -65,11 +74,14 @@ export class MatchController {
     difficulty: BotDifficulty = 'normal',
   ) {
     this.bots = game.bots!.bots;
+    this.floor = new FloorWeapons(game.map.collision);
+    game.scene.add(this.floor.group);
     this.hud = new RoundHUD(container);
     this.rm = new RoundManager(config, {
       onState: (s, prev) => this.onState(s, prev),
       onRoundSetup: (r) => this.setupRound(r),
       onRoundEnd: (r) => {
+        this.lastWinner = r.winner;
         // 보상: 승리 3000 / 연패 보너스 1900·2400·2900. 진 팀에서 살아남은 사람은 1000만
         const survivors = new Set<string>();
         for (const p of this.rm.participants.values()) if (p.alive && p.team !== r.winner) survivors.add(p.id);
@@ -141,6 +153,7 @@ export class MatchController {
         get weaponsLocked() {
           return match.weaponsLocked;
         },
+        weaponFor: (b) => match.weaponFor(b),
       },
       difficulty,
       game.agentId,
@@ -234,6 +247,34 @@ export class MatchController {
       }
     }
 
+    // ── G: 들고 있는 총 버리기 (아군에게 건네주기) / 바닥 무기 줍기
+    const interactPressed = interactHeld && !this.prevInteract;
+    this.prevInteract = interactHeld;
+    const cur = g.inventory.current;
+    if (alive && dropPressed && !holdingCore && cur && (cur.def.slot === 1 || cur.def.slot === 2) && cur.def.id !== 'storm') this.dropMyWeapon();
+    this.floor.update(dt);
+    this.pickupName = null;
+    if (alive) {
+      const near = this.floor.nearest(p, 2);
+      if (near) {
+        const def = getWeapon(near.weapon);
+        const has = g.inventory.get(def.slot as 1 | 2);
+        const d = Math.hypot(near.pos.x - p.x, near.pos.z - p.z);
+        const fresh = near.by === PLAYER_ID && performance.now() - near.at < 1200;
+        if (!has && d < 1.2 && !fresh) this.pickMyWeapon(near);
+        else if (has) {
+          this.pickupName = def.name;
+          if (interactPressed) {
+            // 바꿔 들기: 같은 칸의 무기를 내려놓고 줍는다 (같은 E로 설치·해체가 시작되지 않게)
+            this.dropMyWeapon(def.slot as 1 | 2, false);
+            this.pickMyWeapon(near);
+            this.pickupLock = true;
+          }
+        }
+      }
+    }
+    this.botPickups();
+
     // ── 설치 (공격): Core를 든 채 좌클릭 유지, 또는 E 유지(자동으로 Core를 꺼냄)
     // ── 해체 (수비): E 유지. 둘 다 이동 키를 누르면 취소
     this.interacting = null;
@@ -300,6 +341,7 @@ export class MatchController {
       winner: rm.winner,
       config: rm.config,
       spectating: this.spectatingName,
+      pickup: this.pickupName,
       credits: this.economy.get(PLAYER_ID),
       rewards: this.economy.lastRewards.get(PLAYER_ID) ?? [],
     });
@@ -377,6 +419,83 @@ export class MatchController {
     return true;
   }
 
+  // ───────────────────────── 바닥 무기 ─────────────────────────
+
+  /** 내 총을 앞으로 던져 버린다 (slot 생략 = 손에 든 무기, toss=false면 발밑에) */
+  private dropMyWeapon(slot?: 1 | 2, toss = true): void {
+    const g = this.game;
+    const w = slot ? g.inventory.get(slot) : g.inventory.current;
+    if (!w) return;
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(g.player.pitch, g.player.yaw, 0, 'YXZ'));
+    const from = g.player.position.clone().setY(g.player.position.y + 1.3).addScaledVector(dir, 0.4);
+    const vel = toss ? dir.clone().multiplyScalar(4.5).add(new THREE.Vector3(0, 1.8, 0)) : new THREE.Vector3(0, 0, 0);
+    this.floor.drop(w.def.id, from, vel, PLAYER_ID, { mag: w.mag, reserve: w.reserve });
+    g.inventory.remove(w.def.slot);
+    g.shop.forget(w.def.id);
+    g.sound.play('ui', { gain: 0.5, pitch: 0.7 });
+  }
+
+  /** 바닥 무기를 내가 줍는다 (탄약은 버린 그대로) */
+  private pickMyWeapon(w: FloorWeapon): void {
+    const g = this.game;
+    this.floor.remove(w.id);
+    const def = getWeapon(w.weapon);
+    void loadWeaponTemplate(def).then((t) => {
+      g.inventory.give(def, t, true);
+      const o = g.inventory.get(def.slot as 1 | 2);
+      if (o && w.mag !== undefined) {
+        o.mag = w.mag;
+        o.reserve = w.reserve ?? o.reserve;
+      }
+      g.sound.weapon(def.id, 'equip');
+    });
+  }
+
+  /** 봇: 주무기가 없는 봇은 발밑의 주무기를, 기본 권총뿐인 봇은 권총을 줍는다 */
+  private botPickups(): void {
+    if (!this.floor.items.size) return;
+    for (const b of this.bots) {
+      if (!b.alive || !b.enabled) continue;
+      const near = this.floor.nearest(b.ctrl.position, 1.3, (w) => this.botWants(b, w));
+      if (!near) continue;
+      this.floor.remove(near.id);
+      const def = getWeapon(near.weapon);
+      if (def.slot === 1) void b.setLoadout(def.id, b.secondary.id);
+      else void b.setLoadout(b.primary?.id ?? null, def.id);
+    }
+  }
+
+  private botWants(b: Bot, w: FloorWeapon): boolean {
+    const def = getWeapon(w.weapon);
+    if (def.slot === 1) return !b.primary;
+    return def.slot === 2 && b.secondary.id === 'tack' && def.id !== 'tack';
+  }
+
+  /** 아군 봇이 가지러 갈 무기: 내가(또는 아군이) 버린 총 중 이 봇에게 필요한 가장 가까운 것 (25m 안) */
+  weaponFor(b: Bot): THREE.Vector3 | null {
+    if (!b.alive || b.teamId !== this.myTeam || !this.floor.items.size) return null;
+    // 교전 중에는 아주 가까운 것만
+    const range = this.rm.state === 'ActiveRound' ? 6 : 25;
+    let best: FloorWeapon | null = null;
+    let bd = range * range;
+    for (const w of this.floor.items.values()) {
+      if (!w.settled || !this.botWants(b, w)) continue;
+      // 이미 다른 아군 봇이 더 가까이 있으면 그 봇에게 양보
+      const d = w.pos.distanceToSquared(b.ctrl.position);
+      if (d >= bd) continue;
+      const closer = this.bots.some((o) => o !== b && o.alive && o.teamId === b.teamId && this.botWants(o, w) && w.pos.distanceToSquared(o.ctrl.position) < d);
+      if (closer) continue;
+      bd = d;
+      best = w;
+    }
+    return best ? best.pos : null;
+  }
+
+  /** 지도 표시용 */
+  floorPositions(): THREE.Vector3[] {
+    return this.floor.positions();
+  }
+
   // ───────────────────────── 이벤트 처리 ─────────────────────────
 
   private onDeath(id: string, e: DamageEvent): void {
@@ -413,12 +532,14 @@ export class MatchController {
     const map = g.map;
     const mySide = this.mySide;
     const pistolRound = round === 1 || this.sideSwapped;
+    this.floor.clear();
 
     // 플레이어: 지난 라운드에 살아남았으면 무기·방어구 유지, 죽었으면(또는 첫 라운드/진영 교체) 기본 장비
     const mine = mySide === 'attack' ? map.spawns.attackers : map.spawns.defenders;
     const sp = mine[Math.floor(mine.length / 2)];
-    const keep = !this.playerDied && !this.sideSwapped;
-    const armor = keep ? g.local.vitals.armor : 0;
+    // 살아남았거나 우리 팀이 이겼으면 산 총 유지 (방어구는 살아남았을 때만)
+    const keep = (!this.playerDied || this.lastWinner === this.myTeam) && !this.sideSwapped;
+    const armor = !this.playerDied && !this.sideSwapped ? g.local.vitals.armor : 0;
     g.local.team = mySide;
     g.respawn(sp.position.x, sp.position.z, sp.yaw, armor);
     if (!keep) void g.equipDefaultLoadout();
@@ -431,7 +552,7 @@ export class MatchController {
     this.sideSwapped = false;
 
     // 봇: 살아남은 봇은 장비 유지, 스폰 배치, 구매, 팀 계획
-    const botKeep = new Set(this.bots.filter((b) => !this.botDied.has(b.id)).map((b) => b.id));
+    const botKeep = new Set(this.bots.filter((b) => !this.botDied.has(b.id) || b.teamId === this.lastWinner).map((b) => b.id));
     if (round === 1) botKeep.clear();
     this.botDied.clear();
     g.bots!.setupRound(botKeep, pistolRound, sp.position);
@@ -453,6 +574,7 @@ export class MatchController {
     g.sound.play('explosion', { at: center, size: 'large', intensity: 1 });
     const { explosionRadius: R, explosionDamage: D } = this.rm.config;
     g.effects.explosion(center, R);
+    g.coreBlast.start(center, R);
     // 반경 안의 모두에게 거리 비례 피해 (벽 무시). 죽으면 일반 사망과 같은 경로(킬 피드, 라운드 집계)로 처리
     const weapon = { ...getWeapon('blade'), name: 'EXPLOSION' };
     const shooter = { id: 'core', name: 'CORE', team: 'attack' as const };
@@ -519,6 +641,8 @@ export class MatchController {
     this.hud.dispose();
     this.core.root.removeFromParent();
     this.barrier.removeFromParent();
+    this.floor.clear();
+    this.floor.group.removeFromParent();
     g.local.onDeath = undefined;
     g.bots?.detach();
     for (const b of this.bots) b.onDeath = undefined;

@@ -27,7 +27,8 @@ const ACTION_LABELS: Record<Action, string> = {
   ability2: '능력 2',
   signature: '고유 능력',
   ultimate: '궁극기',
-  drop: 'Core 버리기',
+  drop: '무기 / Core 버리기',
+  map: '지도',
 };
 
 function keyLabel(code: string): string {
@@ -151,6 +152,15 @@ export class Menu {
     if (el) el.textContent = this.game.map.def.name;
   }
 
+  /** 일시정지 화면 안내 문구 */
+  setLockHint(text: string): void {
+    this.pause.querySelector('.lock-hint')!.textContent = text;
+  }
+
+  get settingsOpen(): boolean {
+    return !this.settingsPanel.hidden;
+  }
+
   show(state: GameState): void {
     this.root.hidden = state === 'playing';
     // 로딩 중에는 LoadingScreen이 화면을 덮는다
@@ -185,11 +195,6 @@ export class Menu {
         break;
       case 'resume':
         g.resume();
-        // 포인터 락 해제 직후에는 브라우저가 재잠금을 거부할 수 있다
-        setTimeout(() => {
-          if (g.state === 'paused')
-            this.pause.querySelector('.lock-hint')!.textContent = '잠시 후 RESUME을 다시 눌러주세요.';
-        }, 300);
         break;
       case 'respawn':
         g.respawn();

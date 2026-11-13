@@ -124,6 +124,8 @@ export interface TeamPlan {
 }
 
 export interface BrainContext {
+  /** 가지러 갈 바닥 무기 (없으면 null) */
+  weaponFor?(bot: Bot): THREE.Vector3 | null;
   time: number;
   /** 교전 상태가 된 뒤 경과 시간 */
   activeTime: number;
@@ -363,6 +365,13 @@ export class BotBrain {
       return;
     }
     this.perceive(ctx);
+    // 아군이 건네준(바닥에 버린) 총을 가지러 간다
+    const fetch = ctx.weaponFor?.(bot) ?? null;
+    if (fetch) {
+      bot.hold = false;
+      if (!bot.goal || bot.goal.distanceToSquared(fetch) > 0.25) bot.goTo(fetch, true);
+      return;
+    }
     if (!ctx.combatActive) {
       // 구매 단계: 제자리에서 둘러본다
       bot.hold = true;

@@ -74,7 +74,7 @@ export class BuyMenu {
     this.root.hidden = true;
     this.game.input.suspended = false;
     this.game.input.clear();
-    if (this.game.state === 'playing' && !this.game.input.forceActive) this.game.input.requestLock();
+    if (this.game.state === 'playing') this.game.lockPointer();
   }
 
   toggle(): void {

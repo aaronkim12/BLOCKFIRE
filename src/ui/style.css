@@ -1849,6 +1849,26 @@ body[data-state='paused'] .rh-progress {
   background: rgba(3, 5, 8, 0.72);
 }
 
+/* M 키 지도: 화면을 가리지 않게 반투명, 클릭은 게임으로 */
+.tac-map.view {
+  pointer-events: none;
+  background: rgba(3, 5, 8, 0.25);
+}
+
+.tac-map.view .tm-panel {
+  background: rgba(10, 12, 18, 0.78);
+}
+
+.tac-map.view .tm-panel canvas {
+  width: min(70vh, 70vw);
+  height: min(70vh, 70vw);
+  opacity: 0.92;
+}
+
+.tac-map.view footer {
+  display: none;
+}
+
 .tm-panel {
   display: flex;
   flex-direction: column;

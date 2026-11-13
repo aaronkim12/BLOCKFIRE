@@ -84,6 +84,9 @@ export class PlayerController {
     const dy = delta.dy / zoom;
     const k = 0.0022 * sensitivity;
     this.yaw -= dx * k;
+    // -π..π 로 유지 (값이 끝없이 커지지 않게)
+    if (this.yaw > Math.PI) this.yaw -= Math.PI * 2;
+    else if (this.yaw < -Math.PI) this.yaw += Math.PI * 2;
     this.pitch -= dy * k * (invertY ? -1 : 1);
     const lim = Math.PI / 2 - 0.001;
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));

@@ -42,12 +42,55 @@ export class Input {
     return (this.locked || this.forceActive) && !this.suspended;
   }
 
-  requestLock(): void {
-    const p = this.target.requestPointerLock({ unadjustedMovement: true }) as unknown as
-      | Promise<void>
-      | undefined;
-    // unadjustedMovement(원시 입력)를 지원하지 않는 환경이면 일반 포인터 락으로 재시도
-    p?.catch?.(() => this.target.requestPointerLock());
+  /** 원시 마우스 입력(unadjustedMovement)을 쓸 수 있는지 — 거부되면 다음부터 일반 포인터 락 */
+  private rawOk = true;
+  /** 포인터 락 직후 몇 번의 이동은 버린다 (브라우저가 큰 값을 한 번에 보내는 경우가 있음) */
+  private skipMoves = 0;
+
+  /**
+   * 포인터 락 요청. 잠기면 true, 브라우저가 거부하면 false.
+   * (예전에는 거부돼도 알 수 없어서, 게임은 진행 중인데 마우스가 풀린 채 아무 키도 안 먹는 상태가 됐다)
+   */
+  requestLock(): Promise<boolean> {
+    if (this.locked) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        document.removeEventListener('pointerlockchange', onChange);
+        document.removeEventListener('pointerlockerror', onError);
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const onChange = () => {
+        if (this.locked) finish(true);
+      };
+      const onError = () => finish(this.locked);
+      document.addEventListener('pointerlockchange', onChange);
+      document.addEventListener('pointerlockerror', onError);
+      const timer = setTimeout(() => finish(this.locked), 1500);
+      try {
+        const p = (this.rawOk ? this.target.requestPointerLock({ unadjustedMovement: true }) : this.target.requestPointerLock()) as unknown as
+          | Promise<void>
+          | undefined;
+        p?.catch?.((e: DOMException) => {
+          // 원시 입력을 지원하지 않는 기기(일부 크롬북 등): 다음 클릭부터 일반 포인터 락
+          if (e?.name === 'NotSupportedError') this.rawOk = false;
+          finish(this.locked);
+        });
+      } catch {
+        this.rawOk = false;
+        finish(false);
+      }
+    });
+  }
+
+  /** 포인터 락이 새로 걸렸을 때 (Game이 호출) */
+  onLocked(): void {
+    this.skipMoves = 2;
+    this.mouseDX = 0;
+    this.mouseDY = 0;
   }
 
   isDown(action: Action): boolean {
@@ -112,6 +155,13 @@ export class Input {
 
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.locked) return;
+    if (this.skipMoves > 0) {
+      this.skipMoves--;
+      return;
+    }
+    // 한 번에 터무니없이 큰 이동(포인터 락이 풀리거나 다시 걸릴 때 브라우저가 보내는 값)은 무시
+    // — 이 값 때문에 시선이 한 바퀴 돌아 다른 사람 화면에서 캐릭터가 빙글 도는 일이 있었다
+    if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
     this.mouseDX += e.movementX;
     this.mouseDY += e.movementY;
   };

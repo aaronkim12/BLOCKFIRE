@@ -68,7 +68,7 @@ export class NetClient {
         reject(new Error('서버에 연결할 수 없습니다'));
       }, timeoutMs);
       ws.onopen = () => {
-        this.send({ t: 'hello', name });
+        this.send({ t: 'hello', name, token: clientToken() });
       };
       ws.onerror = () => {
         clearTimeout(timer);
@@ -146,5 +146,19 @@ export class NetClient {
     }
     this.ws = null;
     this.room = null;
+  }
+}
+
+/** 이 브라우저의 고유 값 (경기 중 나갔다가 같은 방 코드로 다시 들어오면 자기 자리로) */
+function clientToken(): string {
+  try {
+    let t = localStorage.getItem('blockfire.token');
+    if (!t) {
+      t = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('blockfire.token', t);
+    }
+    return t;
+  } catch {
+    return '';
   }
 }

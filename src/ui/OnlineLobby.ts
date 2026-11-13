@@ -182,7 +182,7 @@ export class OnlineLobby {
     const team = (t: TeamId) => {
       const list = room.players.filter((p) => p.team === t);
       const rows = list
-        .map((p) => `<li class="${p.id === this.net.id ? 'me' : ''}"><b>${escapeHtml(p.name)}</b>${p.host ? '<em>HOST</em>' : ''}</li>`)
+        .map((p) => `<li class="${p.id === this.net.id ? 'me' : ''}"><b>${escapeHtml(p.name)}</b>${p.host ? '<em>HOST</em>' : ''}${p.away ? '<em class="away">나감 · 같은 코드로 재접속 가능</em>' : ''}</li>`)
         .join('');
       const empty = Array.from({ length: TEAM_SIZE - list.length }, () => '<li class="empty">빈 자리</li>').join('');
       const canJoin = me && me.team !== t && list.length < TEAM_SIZE;

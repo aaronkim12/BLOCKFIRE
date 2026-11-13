@@ -24,6 +24,8 @@ export interface RoundHUDData {
   config: MatchConfig;
   /** 관전 중인 아군 이름 */
   spectating: string | null;
+  /** 가까이 있는 바닥 무기 이름 (E로 바꿔 들기) */
+  pickup?: string | null;
   credits: number;
   /** 이번 라운드 보상 내역 */
   rewards: { amount: number; reason: string }[];
@@ -171,7 +173,8 @@ export class RoundHUD {
     this.q('.rh-carry').hidden = !d.carrying || !d.alivePlayer;
     let prompt = '';
     if (d.alivePlayer && d.progress < 0) {
-      if (d.state === 'BuyPhase' && d.core.status === 'dropped' && d.mySide === 'attack') prompt = `구매 단계 — ${Math.ceil(d.timeLeft)}초 · <kbd>B</kbd> 구매 · 앞에 놓인 Core를 주우세요`;
+      if (d.pickup) prompt = `<kbd>E</kbd> ${d.pickup} 줍기 (들고 있는 총과 바꾸기)`;
+      else if (d.state === 'BuyPhase' && d.core.status === 'dropped' && d.mySide === 'attack') prompt = `구매 단계 — ${Math.ceil(d.timeLeft)}초 · <kbd>B</kbd> 구매 · 앞에 놓인 Core를 주우세요`;
       else if (d.state === 'BuyPhase') prompt = `구매 단계 — ${Math.ceil(d.timeLeft)}초 · <kbd>B</kbd> 구매 메뉴`;
       else if (d.state === 'RoundStart') prompt = '준비…';
       else if (d.carrying && d.inSite && d.state === 'ActiveRound') prompt = `<kbd>4</kbd> Core를 들고 <kbd>LMB</kbd> 또는 <kbd>E</kbd> 길게 눌러 설치 (${d.inSite} 구역)`;

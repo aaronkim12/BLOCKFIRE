@@ -146,7 +146,7 @@ void main() {
     const h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     // 픽셀 배율은 CSS 픽셀 기준 (고DPI 화면에서도 같은 크기의 픽셀로 보이도록)
-    const scale = Math.max(1, this.settings.pixelScale, this.low ? 3 : 1);
+    const scale = Math.max(1, this.settings.pixelScale, this.low ? 2.5 : 1);
     const pr = scale <= 1 ? this.renderer.getPixelRatio() : 1;
     const iw = Math.max(1, Math.floor((w * pr) / scale));
     const ih = Math.max(1, Math.floor((h * pr) / scale));

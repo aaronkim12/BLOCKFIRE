@@ -27,6 +27,8 @@ export interface LobbyPlayer {
   host: boolean;
   /** 캐릭터 선택 단계에서 LOCK IN 했는지 */
   locked: boolean;
+  /** 경기 중에 나감 (같은 방 코드로 다시 들어오면 이어서) */
+  away?: boolean;
 }
 
 /** 대기실 → 캐릭터 선택 → 경기 */
@@ -72,6 +74,13 @@ export interface PlayerState {
   tp?: number;
 }
 
+/** 바닥 무기: 번호, 무기 id, 위치 */
+export interface FloorItem {
+  i: number;
+  w: string;
+  p: V3;
+}
+
 /** 서버 스냅샷: 플레이어 한 명 */
 export interface NetPlayer {
   id: string;
@@ -103,6 +112,7 @@ export interface SelfSnap {
   credits: number;
   rewards: { amount: number; reason: string }[];
   primary: string | null;
+  /** 보조무기 ('' = 버려서 없음) */
   secondary: string;
   armor: number;
   charges: Record<AbilitySlot, number>;
@@ -112,7 +122,7 @@ export interface SelfSnap {
 }
 
 export type ClientMsg =
-  | { t: 'hello'; name: string }
+  | { t: 'hello'; name: string; /** 이 브라우저의 고유 값 (경기 중 나갔다가 다시 들어올 때 본인 확인) */ token?: string }
   | { t: 'create' }
   | { t: 'join'; code: string }
   | { t: 'leave' }
@@ -131,6 +141,10 @@ export type ClientMsg =
   | { t: 'buy'; item: string }
   | { t: 'sell'; item: string }
   | { t: 'drop' }
+  /** 손에 든 총 버리기 (아군에게 건네주기) */
+  | { t: 'dropWeapon' }
+  /** 바닥 무기 줍기 (같은 칸의 총과 바꾸기) */
+  | { t: 'pickup'; i: number }
   /** 능력: 시선(eye·aim), alt 변형, 지도에서 고른 지점, 누른 시간(충격파) */
   | { t: 'cast'; slot: AbilitySlot; eye: V3; aim: V3; variant?: 0 | 1; points?: V3[]; held?: number }
   | { t: 'ping'; c: number }
@@ -142,7 +156,7 @@ export type ServerMsg =
   | { t: 'room'; room: RoomInfo | null }
   | { t: 'error'; msg: string }
   | { t: 'start'; you: string; config: import('../rounds/matchConfig').MatchConfig; /** 이번 경기 맵 id (무작위면 서버가 뽑은 맵) */ map: string }
-  | { t: 'snap'; time: number; players: NetPlayer[]; round: RoundSnap; you: SelfSnap }
+  | { t: 'snap'; time: number; players: NetPlayer[]; round: RoundSnap; you: SelfSnap; /** 바닥에 떨어진 무기 */ floor?: FloorItem[] }
   /** 내 위치를 서버가 정함 (라운드 시작 스폰, 이동 검사 실패) */
   | { t: 'teleport'; p: V3; yaw: number; seq: number }
   /** 지진 등으로 띄워짐 (내 캐릭터) */

@@ -19,6 +19,7 @@ import type { NetClient } from '../net/NetClient';
 import { OnlineMatch } from '../net/OnlineMatch';
 import { BlindGlow } from '../effects/BlindGlow';
 import { ConcussMark } from '../effects/ConcussMark';
+import { CoreBlast } from '../effects/CoreBlast';
 import { THROW_RELEASE } from '../effects/AbilityHand';
 import type { BotDifficulty } from '../ai/botConfig';
 import { PSXRenderer } from '../graphics/PSXRenderer';
@@ -152,6 +153,8 @@ export class Game {
   private blindGlow = new BlindGlow();
   /** 충격 상태인 캐릭터 머리 위 별 */
   private concussMark = new ConcussMark();
+  /** Core 폭발: 커지는 빛의 구 */
+  readonly coreBlast = new CoreBlast();
   /** 던지는 동작 중: 손을 떠나는 시점에 발동 */
   private pendingThrow: { slot: AbilitySlot; variant: 0 | 1; t: number } | null = null;
   /** 막 던진 능력 (좌클릭을 누르고 있는 동안 휘게 조종) */
@@ -189,7 +192,7 @@ export class Game {
     this.scene.fog = this.fog;
     this.sunDir = new THREE.Vector3(...env.sunDirection).normalize();
     this.mapChoice = savedMapChoice() ?? RANDOM_MAP;
-    this.scene.add(this.muzzleLight, this.blindGlow.group, this.concussMark.group);
+    this.scene.add(this.muzzleLight, this.blindGlow.group, this.concussMark.group, this.coreBlast.group);
     // 장면 행렬은 프레임마다 한 번만 갱신 (렌더 패스마다 다시 계산하지 않게)
     this.scene.matrixWorldAutoUpdate = false;
     CharacterModel.lod = { frustum: this.lodFrustum, cam: new THREE.Vector3(), low: false };
@@ -328,6 +331,17 @@ export class Game {
     window.addEventListener('resize', this.onResize);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     // 게임 중 Ctrl+W 등으로 실수로 탭을 닫지 않도록 확인
+    // 일시정지 화면: 버튼이 아닌 곳을 클릭해도 게임으로 돌아간다 (클릭이 곧 포인터 락 요청이 됨)
+    window.addEventListener('mousedown', (e) => {
+      if (this.state !== 'paused' || this.input.forceActive || e.button !== 0) return;
+      const t = e.target as HTMLElement;
+      if (t.closest('button, select, input, label, a, .settings-panel, .practice-grid, .agent-select, .online-lobby')) return;
+      if (!this.menu.settingsOpen) this.resume();
+    });
+    // 다른 창·탭으로 전환하면 바로 일시정지 (돌아와서 클릭하면 이어서)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && this.state === 'playing' && !this.input.forceActive) this.setState('paused');
+    });
     window.addEventListener('beforeunload', (e) => {
       if (this.state === 'playing' || this.state === 'paused') e.preventDefault();
     });
@@ -424,13 +438,14 @@ export class Game {
     this.abilities.fill();
     this.respawn();
     this.setState('playing');
-    if (!this.input.forceActive) this.input.requestLock();
+    this.lockPointer();
   }
 
   resume(): void {
     this.sound.unlock();
+    this.menu.setLockHint('');
     this.setState('playing');
-    if (!this.input.forceActive) this.input.requestLock();
+    this.lockPointer();
   }
 
   /** 경기 시작: 플레이어 + 아군 봇 4 대 적 봇 5 */
@@ -454,7 +469,7 @@ export class Game {
     this.match = new MatchController(this, this.container, { ...this.matchConfig }, this.botDifficulty);
     this.match.start();
     this.setState('playing');
-    if (!this.input.forceActive) this.input.requestLock();
+    this.lockPointer();
   }
 
   /** 온라인 경기 시작 (서버가 start를 보냈을 때) */
@@ -480,7 +495,7 @@ export class Game {
     this.inventory.clear();
     this.match = new OnlineMatch(this, this.container, net, config);
     this.setState('playing');
-    if (!this.input.forceActive) this.input.requestLock();
+    this.lockPointer();
   }
 
   /** 온라인: 내 사격을 서버로 (서버가 그 시각으로 되감아 판정) */
@@ -613,6 +628,7 @@ export class Game {
 
   setState(s: GameState): void {
     this.state = s;
+    if (s !== 'playing') this.tacMap?.closeView();
     document.body.dataset.state = s;
     this.input.clear();
     this.menu.show(s);
@@ -672,7 +688,30 @@ export class Game {
     this.psx.resize();
   };
 
+  /** 마우스를 잠근다. 브라우저가 거부하면 일시정지 화면으로 (화면을 클릭하면 다시 시도) */
+  lockPointer(): void {
+    if (this.input.forceActive) return;
+    void this.input.requestLock().then((ok) => {
+      if (ok || this.input.locked) return;
+      if (this.state === 'playing' && !this.pointerUiOpen()) this.pauseForLock();
+    });
+  }
+
+  /** 마우스를 쓰는 UI(구매 메뉴·전술 지도)가 열려 있음 */
+  private pointerUiOpen(): boolean {
+    return this.buyMenu.isOpen || !!this.tacMap?.isOpen || this.input.suspended;
+  }
+
+  private pauseForLock(): void {
+    this.setState('paused');
+    this.menu.setLockHint('화면을 클릭하면 게임으로 돌아갑니다');
+  }
+
+  /** 진행 중인데 마우스가 풀려 있는 시간 (안전장치) */
+  private unlockedTime = 0;
+
   private onPointerLockChange = (): void => {
+    if (this.input.locked) this.input.onLocked();
     // 구매 메뉴를 열면 마우스를 쓰기 위해 포인터 락을 푼다 → 일시정지로 보지 않음
     if (!this.input.locked && this.state === 'playing' && !this.input.forceActive && !this.buyMenu.isOpen && !this.tacMap?.isOpen) this.setState('paused');
   };
@@ -732,6 +771,16 @@ export class Game {
     this.lastTime = now;
     this.trackFps(dt);
     this.updatePerformance(dt);
+    // 안전장치: 진행 중인데 마우스 잠금이 0.4초 넘게 풀려 있으면 일시정지 화면으로 (키가 안 먹는 상태로 남지 않게)
+    if (this.state === 'playing' && !this.input.forceActive && !this.input.locked && !this.pointerUiOpen()) {
+      this.unlockedTime += dt;
+      if (this.unlockedTime > 0.4) {
+        this.unlockedTime = 0;
+        this.pauseForLock();
+      }
+    } else this.unlockedTime = 0;
+    // 온라인 일시정지 중에도 "가만히 서 있음"을 계속 알린다 (다른 사람 화면에서 이상하게 움직이지 않게)
+    if (this.state === 'paused' && this.match instanceof OnlineMatch) this.match.idleTick(dt);
 
     if (this.state === 'playing') this.updatePlaying(dt);
     else if (this.state === 'menu' || this.state === 'loading') this.updateMenuCamera(dt);
@@ -759,6 +808,7 @@ export class Game {
       this.effects.update(this.state === 'paused' ? 0 : dt, this.camera);
       this.updateBlindGlow(this.state === 'paused' ? 0 : dt);
     }
+    this.coreBlast.update(dt);
     const showViewModel = (this.state === 'playing' || this.state === 'paused') && this.local.alive && !this.piloting;
     // 드론 시점: 화면을 드론 카메라처럼
     document.body.classList.toggle('drone-view', !!this.piloting);
@@ -834,6 +884,8 @@ export class Game {
     // ── 능력 / 구매 메뉴
     this.updateAbilities(dt, alive);
     if (this.input.wasPressed('buy')) this.buyMenu.toggle();
+    // M: 지도 (보기만 — 계속 움직일 수 있음)
+    if (this.input.wasPressed('map')) this.tacMap.toggleView();
     this.buyMenu.update();
     if (this.match) {
       const i = this.input;
@@ -1009,7 +1061,7 @@ export class Game {
     this.tacMap.open(req, (points) => {
       this.input.suspended = false;
       this.input.clear();
-      if (this.state === 'playing' && !this.input.forceActive) this.input.requestLock();
+      if (this.state === 'playing') this.lockPointer();
       cb(points);
     });
   }
@@ -1289,6 +1341,23 @@ export class Game {
       sh.map = null;
     }
     this.psx.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** 지도(M)에 표시할 아군: 봇 대전의 아군 봇 / 온라인의 같은 팀 플레이어 */
+  allyMarkers(): { pos: THREE.Vector3; name: string }[] {
+    const out: { pos: THREE.Vector3; name: string }[] = [];
+    const m = this.match;
+    if (m instanceof OnlineMatch) {
+      for (const r of m.remotes.values()) if (r.teamId === m.myTeam && r.alive) out.push({ pos: r.ctrl.position, name: r.name });
+    } else if (m && this.bots) {
+      for (const b of this.bots.allies) if (b.alive && b.enabled) out.push({ pos: b.ctrl.position, name: b.name });
+    }
+    return out;
+  }
+
+  /** 지도(M)에 표시할 바닥 무기 */
+  floorWeaponMarkers(): THREE.Vector3[] {
+    return this.match?.floor.positions() ?? [];
   }
 
   private trackFps(dt: number): void {

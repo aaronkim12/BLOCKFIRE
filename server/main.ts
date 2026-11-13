@@ -20,6 +20,8 @@ interface Client {
   ws: WebSocket;
   name: string;
   room: Room | null;
+  /** 브라우저 고유 값 (다시 들어올 때 본인 확인) */
+  token: string;
 }
 
 class Room {
@@ -31,6 +33,8 @@ class Room {
   ending = false;
   /** 경기 방식 (방장이 고름) */
   mode: MatchMode = 'standard';
+  /** 플레이어 id → 브라우저 고유 값 (서버만 앎) */
+  readonly tokens = new Map<string, string>();
   /** 맵 (방장이 고름, 'random'이면 경기 시작 때 뽑음) */
   map: string = RANDOM_MAP;
   /** 지난 경기 맵 (무작위일 때 연속으로 같은 맵이 나오지 않게) */
@@ -96,19 +100,62 @@ function freeAgent(room: Room, team: TeamId, prefer?: string): string {
 }
 
 function joinRoom(c: Client, room: Room): void {
-  if (room.match || room.selecting) return send(c, { t: 'error', msg: '이미 경기를 시작한 방입니다' });
+  if (room.match || room.selecting) {
+    // 경기 중에 나갔던 사람이면 자기 자리로 다시 들어간다
+    const away = room.match ? room.players.filter((p) => p.away) : [];
+    const mine = away.find((p) => c.token && room.tokens.get(p.id) === c.token) ?? away.find((p) => p.name === c.name);
+    if (mine) return rejoinMatch(c, room, mine);
+    return send(c, { t: 'error', msg: '이미 경기를 시작한 방입니다' });
+  }
   const team = openTeam(room);
   if (!team) return send(c, { t: 'error', msg: '방이 가득 찼습니다 (5대5)' });
   leaveRoom(c);
   c.room = room;
   room.players.push({ id: c.id, name: c.name, team, agent: freeAgent(room, team), host: room.players.length === 0, locked: false });
+  room.tokens.set(c.id, c.token);
   room.sendRoom();
+}
+
+/** 경기 중 나갔던 사람이 다시 들어옴: 예전 id(캐릭터·크레딧·장비)를 그대로 이어받는다 */
+function rejoinMatch(c: Client, room: Room, p: LobbyPlayer): void {
+  leaveRoom(c);
+  const old = clients.get(p.id);
+  if (old && old !== c) {
+    old.room = null;
+    clients.delete(p.id);
+  }
+  clients.delete(c.id);
+  c.id = p.id;
+  clients.set(c.id, c);
+  c.room = room;
+  p.away = false;
+  room.tokens.set(p.id, c.token);
+  send(c, { t: 'welcome', id: p.id });
+  room.sendRoom();
+  send(c, { t: 'start', you: p.id, config: room.config, map: room.lastMap });
+  room.match?.rejoin(p.id);
 }
 
 function leaveRoom(c: Client): void {
   const room = c.room;
   if (!room) return;
   c.room = null;
+  // 경기 중: 자리는 남겨 둔다 (같은 방 코드로 다시 들어오면 이어서). 캐릭터는 쓰러진 것으로
+  const me = room.players.find((p) => p.id === c.id);
+  if (room.match && !room.ending && me) {
+    me.away = true;
+    me.locked = false;
+    if (me.host) {
+      me.host = false;
+      const next = room.players.find((p) => !p.away);
+      if (next) next.host = true;
+    }
+    room.match.removePlayer(c.id);
+    send(c, { t: 'room', room: null });
+    if (room.players.every((p) => p.away)) rooms.delete(room.code);
+    else room.sendRoom();
+    return;
+  }
   const i = room.players.findIndex((p) => p.id === c.id);
   if (i >= 0) {
     const wasHost = room.players[i].host;
@@ -131,6 +178,7 @@ function handle(c: Client, m: ClientMsg): void {
   switch (m.t) {
     case 'hello':
       c.name = String(m.name || 'PLAYER').slice(0, 16).toUpperCase();
+      c.token = String(m.token ?? '').slice(0, 64);
       return;
     case 'ping':
       return send(c, { t: 'pong', c: m.c, s: room?.match ? room.time : 0 });
@@ -252,6 +300,9 @@ setInterval(() => {
       setTimeout(() => {
         room.match = null;
         room.ending = false;
+        // 경기가 끝날 때까지 돌아오지 않은 사람은 방에서 뺀다
+        for (let i = room.players.length - 1; i >= 0; i--) if (room.players[i].away) room.players.splice(i, 1);
+        if (!room.players.some((p) => p.host) && room.players[0]) room.players[0].host = true;
         for (const p of room.players) p.locked = false;
         room.sendRoom();
       }, 8000);
@@ -264,7 +315,7 @@ const http = createStaticServer();
 const wss = new WebSocketServer({ server: http });
 http.listen(port);
 wss.on('connection', (ws) => {
-  const c: Client = { id: `p${nextId++}`, ws, name: 'PLAYER', room: null };
+  const c: Client = { id: `p${nextId++}`, ws, name: 'PLAYER', room: null, token: '' };
   clients.set(c.id, c);
   send(c, { t: 'welcome', id: c.id });
   ws.on('message', (data) => {
@@ -282,7 +333,8 @@ wss.on('connection', (ws) => {
   });
   ws.on('close', () => {
     leaveRoom(c);
-    clients.delete(c.id);
+    // 다시 들어와 다른 연결이 이 id를 쓰고 있으면 지우지 않는다
+    if (clients.get(c.id) === c) clients.delete(c.id);
   });
 });
 console.log(`[BLOCKFIRE] server listening on http://0.0.0.0:${port} (WebSocket 같은 주소)`);

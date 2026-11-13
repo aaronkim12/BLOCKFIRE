@@ -10,7 +10,7 @@ import type { MapDefinition } from '../src/maps/MapData';
 import { MapBuilder } from '../src/maps/MapBuilder';
 import type { AABB } from '../src/physics/CollisionWorld';
 import { DEFAULT_MATCH, type MatchConfig } from '../src/rounds/matchConfig';
-import { RoundManager, type Side, type SiteId } from '../src/rounds/RoundManager';
+import { RoundManager, type Side, type SiteId, type TeamId } from '../src/rounds/RoundManager';
 import { getWeapon, WEAPON_BY_ID } from '../src/weapons/weaponData';
 import type { ClientMsg, LobbyPlayer, NetPlayer, PlayerState, ServerMsg, V3 } from '../src/net/protocol';
 import { Avatar } from './Avatar';
@@ -41,6 +41,11 @@ export class ServerMatch {
   private fx: AbilityEffects;
   private time = 0;
   private sideSwapped = false;
+  /** 바닥에 떨어진 무기 */
+  private floor = new Map<number, { i: number; w: string; p: V3; by: string; t: number }>();
+  private nextFloor = 1;
+  /** 지난 라운드 승리 팀 (이긴 팀은 죽었어도 산 총을 가져간다) */
+  private lastWinner: TeamId | null = null;
   /** 사격 한 번 동안 모은 예광탄 끝점 */
   private tracerEnds: V3[] = [];
   /** 누가 누구에게 언제 피해를 줬는지 (처치 관여) */
@@ -66,6 +71,7 @@ export class ServerMatch {
     this.rm = new RoundManager(this.config, {
       onRoundSetup: (r) => this.setupRound(r),
       onRoundEnd: (r) => {
+        this.lastWinner = r.winner;
         const survivors = new Set<string>();
         for (const p of this.rm.participants.values()) if (p.alive && p.team !== r.winner) survivors.add(p.id);
         this.economy.onRoundEnd(r.winner, survivors);
@@ -140,6 +146,12 @@ export class ServerMatch {
         break;
       case 'cast':
         this.cast(a, m);
+        break;
+      case 'dropWeapon':
+        this.dropWeapon(a);
+        break;
+      case 'pickup':
+        this.pickup(a, m.i);
         break;
       case 'dev':
         // 테스트 서버(FAST=1)에서만: 이동 검사 없이 순간이동
@@ -228,6 +240,68 @@ export class ServerMatch {
     if (ok) for (const o of this.avatars.values()) if (o !== a) this.send(o.id, { t: 'cast', id: a.id, slot, eye: m.eye, aim: m.aim, variant: m.variant, points: m.points, held: m.held });
   }
 
+  // ───────────────────────── 바닥 무기 ─────────────────────────
+
+  /** 손에 든 총을 앞으로 던져 버린다 (벽 앞이면 그 앞, 그 아래 바닥에 놓임) */
+  private dropWeapon(a: Avatar): void {
+    if (!a.alive) return;
+    const held = a.s.weapon;
+    if (held && held === a.primary) a.primary = null;
+    else if (held && held === a.secondary) a.secondary = '';
+    else return;
+    a.purchases = a.purchases.filter((pu) => pu.item !== held);
+    const eye = new THREE.Vector3(a.s.p[0], a.s.p[1] + 1.3, a.s.p[2]);
+    const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(Math.max(-0.4, a.s.pitch), a.s.yaw, 0, 'YXZ'));
+    this.placeFloor(held, eye, dir, 2.2, a.id);
+  }
+
+  private placeFloor(weapon: string, eye: THREE.Vector3, dir: THREE.Vector3, dist: number, by: string): void {
+    const col = this.map.collision;
+    const hit = col.raycast(eye.x, eye.y, eye.z, dir.x, dir.y, dir.z, dist);
+    const at = eye.clone().addScaledVector(dir, hit ? Math.max(0, hit.distance - 0.3) : dist);
+    const down = col.raycast(at.x, at.y, at.z, 0, -1, 0, 20);
+    const y = down ? at.y - down.distance : 0;
+    const i = this.nextFloor++;
+    this.floor.set(i, { i, w: weapon, p: [+at.x.toFixed(2), +y.toFixed(2), +at.z.toFixed(2)], by, t: this.time });
+  }
+
+  /** E: 바닥 무기와 같은 칸의 총을 바꾼다 */
+  private pickup(a: Avatar, i: number): void {
+    const f = this.floor.get(i);
+    if (!f || !a.alive) return;
+    if (Math.hypot(f.p[0] - a.s.p[0], f.p[2] - a.s.p[2]) > 2.4) return;
+    const def = WEAPON_BY_ID.get(f.w);
+    if (!def) return;
+    const cur = def.slot === 1 ? a.primary : a.secondary;
+    this.floor.delete(i);
+    if (cur) {
+      a.purchases = a.purchases.filter((pu) => pu.item !== cur);
+      const j = this.nextFloor++;
+      this.floor.set(j, { i: j, w: cur, p: [...f.p], by: a.id, t: this.time });
+    }
+    if (def.slot === 1) a.primary = f.w;
+    else a.secondary = f.w;
+  }
+
+  /** 밟으면 줍기: 그 칸이 비어 있을 때만 (버린 사람은 1.2초 뒤부터) */
+  private autoPickup(): void {
+    if (!this.floor.size) return;
+    for (const a of this.avatars.values()) {
+      if (!a.alive) continue;
+      for (const f of this.floor.values()) {
+        if (Math.hypot(f.p[0] - a.s.p[0], f.p[2] - a.s.p[2]) > 1.2 || Math.abs(f.p[1] - a.s.p[1]) > 1.5) continue;
+        if (f.by === a.id && this.time - f.t < 1.2) continue;
+        const def = WEAPON_BY_ID.get(f.w);
+        if (!def) continue;
+        if (def.slot === 1 && !a.primary) a.primary = f.w;
+        else if (def.slot === 2 && !a.secondary) a.secondary = f.w;
+        else continue;
+        this.floor.delete(f.i);
+        break;
+      }
+    }
+  }
+
   // ───────────────────────── 구매 ─────────────────────────
 
   private canShop(a: Avatar): boolean {
@@ -286,12 +360,15 @@ export class ServerMatch {
     const swap = this.sideSwapped || round === 1;
     this.fx.clear();
     this.fx.status.clear();
+    this.floor.clear();
     const bySide: Record<Side, Avatar[]> = { attack: [], defense: [] };
     for (const a of this.avatars.values()) {
       const side = this.rm.sideOf(a.teamId);
       a.team = side;
       bySide[side].push(a);
-      const keep = !a.died && !swap;
+      // 살아남았거나 팀이 이겼으면 산 총 유지 (방어구는 살아남았을 때만)
+      const keep = (!a.died || a.teamId === this.lastWinner) && !swap;
+      if (a.died && keep) a.vitals.armor = 0;
       a.alive = true;
       a.invulnerable = false;
       a.reprise = 0;
@@ -306,6 +383,8 @@ export class ServerMatch {
       }
       a.purchases = [];
       a.died = false;
+      // 보조무기를 버린 채 라운드가 끝났으면 기본 권총
+      if (!a.secondary) a.secondary = 'tack';
       if (swap) a.abilities.resetAll();
       else a.abilities.roundStart();
     }
@@ -442,6 +521,7 @@ export class ServerMatch {
     this.time += dt;
     const rm = this.rm;
     rm.update(dt);
+    this.autoPickup();
     this.fx.update(dt, 'attack');
     const c = rm.core;
     for (const a of this.avatars.values()) {
@@ -505,10 +585,11 @@ export class ServerMatch {
       sides: { ...rm.sides }, state: rm.state, round: rm.round, timeLeft: +rm.timeLeft.toFixed(2), score: rm.score, core: rm.core,
       participants: [...rm.participants.values()], winner: rm.winner, lastResult: rm.lastResult, history: rm.history,
     };
+    const floor = [...this.floor.values()].map((f) => ({ i: f.i, w: f.w, p: f.p }));
     for (const a of this.avatars.values()) {
       const ab = a.abilities;
       this.send(a.id, {
-        t: 'snap', time: this.time, players, round,
+        t: 'snap', time: this.time, players, round, floor,
         you: {
           credits: this.economy.get(a.id), rewards: this.economy.lastRewards.get(a.id) ?? [],
           primary: a.primary, secondary: a.secondary, armor: a.vitals.armor,
@@ -516,6 +597,16 @@ export class ServerMatch {
         },
       });
     }
+  }
+
+  /** 다시 들어온 사람: 순간이동 번호를 맞춰 상태가 무시되지 않게 하고, 지금 위치를 알려 준다 */
+  rejoin(id: string): void {
+    const a = this.avatars.get(id);
+    if (!a) return;
+    const seq = (this.tpSeq.get(a.id) ?? 0) + 1;
+    this.tpSeq.set(a.id, seq);
+    this.lastTeleport.set(a.id, this.time);
+    this.send(a.id, { t: 'teleport', p: [...a.s.p], yaw: a.s.yaw, seq });
   }
 
   /** 접속이 끊긴 사람: 쓰러진 것으로 */

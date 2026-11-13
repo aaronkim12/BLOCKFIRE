@@ -26,6 +26,8 @@ export interface MatchLink {
   playerTeam: TeamId;
   siteAt(p: THREE.Vector3): SiteId | null;
   weaponsLocked: boolean;
+  /** 이 봇이 가지러 갈 바닥 무기 위치 (아군이 건네준 총) */
+  weaponFor?(bot: Bot): THREE.Vector3 | null;
 }
 
 const TICK = 1 / 64;
@@ -287,6 +289,7 @@ export class BotManager {
       activeTime: this.activeTime,
       rm,
       tactics: this.tactics,
+      weaponFor: (b: Bot) => link.weaponFor?.(b) ?? null,
       canMove: rm.canMove,
       weaponsLocked: link.weaponsLocked,
       combatActive: rm.combatActive,

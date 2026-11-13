@@ -12,6 +12,7 @@ import { loadWeaponTemplate } from '../weapons/WeaponModels';
 import type { NetClient } from './NetClient';
 import { CLIENT_SEND_RATE, type PlayerState, type ServerMsg, type V3 } from './protocol';
 import { CORE_VIEW_DIST, orbitCamera, SPECTATE_DIST, SPECTATE_PITCH } from '../rounds/SpectateCam';
+import { FloorWeapons } from '../rounds/FloorWeapons';
 import { RemotePlayer } from './RemotePlayer';
 
 const REASON_TEXT: Record<string, (mine: boolean) => string> = {
@@ -42,6 +43,10 @@ export class OnlineMatch {
   readonly economy = new EconomyMirror();
   readonly core = new CoreModel();
   readonly remotes = new Map<string, RemotePlayer>();
+  /** 바닥에 떨어진 무기 (서버 목록을 그림) */
+  readonly floor: FloorWeapons;
+  private pickupName: string | null = null;
+  private prevInteract = false;
   /** 이번 구매 단계에 산 것 (환불 가능) — 서버가 알려 줌 */
   refundable: string[] = [];
   plantProgress = -1;
@@ -71,7 +76,8 @@ export class OnlineMatch {
     this.rm = new RoundManager(config, {});
     this.hud = new RoundHUD(container);
     this.barrier = buildSpawnBarrier(game.map);
-    game.scene.add(this.core.root, this.barrier);
+    this.floor = new FloorWeapons(game.map.collision);
+    game.scene.add(this.core.root, this.barrier, this.floor.group);
     game.practice?.dummies.forEach((d) => d.setEnabled(false));
     if (game.practice) game.practice.showcaseVisible = false;
     const me = net.room?.players.find((p) => p.id === net.id);
@@ -217,6 +223,7 @@ export class OnlineMatch {
           this.core.explode();
           g.sound.play('explosion', { at: center, size: 'large', intensity: 1 });
           g.effects.explosion(center, this.rm.config.explosionRadius);
+          g.coreBlast.start(center, this.rm.config.explosionRadius);
           g.shake(0.6);
         }
         break;
@@ -276,6 +283,8 @@ export class OnlineMatch {
       rp.push(m.time, np.s, np.alive, np.hp, np.armor);
     }
 
+    this.floor.sync(m.floor ?? []);
+
     // ── 내 크레딧·장비·능력
     const you = m.you;
     this.economy.credits = you.credits;
@@ -295,8 +304,8 @@ export class OnlineMatch {
     const info = this.net.room?.players.find((p) => p.id === id);
     if (!info) return;
     this.pending.add(id);
-    // 아군은 파랑, 적은 주황 (내 팀 기준 색)
-    const color = info.team === this.myTeam ? 'defense' : 'attack';
+    // 팀 색: 팀 A = 파랑, 팀 B = 빨강 (대기실의 팀 색과 같다)
+    const color = info.team === 'A' ? 'defense' : 'attack';
     void RemotePlayer.create(this.game, id, info.name, info.team, info.agent, color).then((rp) => {
       this.pending.delete(id);
       this.remotes.set(id, rp);
@@ -310,7 +319,7 @@ export class OnlineMatch {
     const inv = this.game.inventory;
     const curP = inv.get(1)?.def.id ?? null;
     const curS = inv.get(2)?.def.id ?? null;
-    if (curP === primary && curS === secondary && inv.get(3)) return;
+    if (curP === primary && curS === (secondary || null) && inv.get(3)) return;
     this.loadoutBusy = true;
     try {
       if (curP !== primary) {
@@ -319,9 +328,11 @@ export class OnlineMatch {
           inv.give(d, await loadWeaponTemplate(d), true);
         } else inv.remove(1);
       }
-      if (curS !== secondary) {
-        const d = getWeapon(secondary);
-        inv.give(d, await loadWeaponTemplate(d), !inv.get(1));
+      if (curS !== (secondary || null)) {
+        if (secondary) {
+          const d = getWeapon(secondary);
+          inv.give(d, await loadWeaponTemplate(d), !inv.get(1));
+        } else inv.remove(2);
       }
       if (!inv.get(3) && !this.game.stormActive) {
         const d = getWeapon('blade');
@@ -390,6 +401,23 @@ export class OnlineMatch {
       if ((plantHeld && holdingCore && g.inventory.state === 'ready') || (interactHeld && c.status === 'dropped')) act = 1;
     } else if (alive && this.mySide === 'defense' && interactHeld && c.status === 'planted') act = 2;
     if (alive && dropPressed && holdingCore) this.net.send({ t: 'drop' });
+    // G: 손에 든 총 버리기 / 바닥 무기 줍기 (밟으면 서버가 자동으로, E는 바꿔 들기)
+    const cur = g.inventory.current;
+    if (alive && dropPressed && !holdingCore && cur && (cur.def.slot === 1 || cur.def.slot === 2) && cur.def.id !== 'storm') this.net.send({ t: 'dropWeapon' });
+    const interactPressed = interactHeld && !this.prevInteract;
+    this.prevInteract = interactHeld;
+    this.floor.update(dt);
+    this.pickupName = null;
+    if (alive) {
+      const near = this.floor.nearest(g.player.position, 2);
+      if (near) {
+        const def = getWeapon(near.weapon);
+        if (g.inventory.get(def.slot as 1 | 2)) {
+          this.pickupName = def.name;
+          if (interactPressed) this.net.send({ t: 'pickup', i: near.id });
+        }
+      }
+    }
     this.plantProgress = carrying && c.planterId === this.myId && c.plantProgress > 0 ? c.plantProgress : -1;
 
     // Core 모형
@@ -438,6 +466,7 @@ export class OnlineMatch {
       winner: rm.winner,
       config: rm.config,
       spectating: this.spectatingName,
+      pickup: this.pickupName,
       credits: this.economy.credits,
       rewards: this.economy.lastRewards.get('player') ?? [],
     });
@@ -463,6 +492,18 @@ export class OnlineMatch {
       tp: this.tpSeq,
       drone: piloting ? ([r(piloting.pos.x), r(piloting.pos.y), r(piloting.pos.z)] as V3) : undefined,
     };
+  }
+
+  private idleTimer = 0;
+
+  /** 일시정지 중: 가만히 서 있는 상태를 가끔 보낸다 (이동·사격·설치 입력 없음) */
+  idleTick(dt: number): void {
+    this.idleTimer -= dt;
+    if (this.idleTimer > 0) return;
+    this.idleTimer = 0.2;
+    const s = this.myState(0, false);
+    s.v = [0, 0];
+    this.net.send({ t: 'state', s });
   }
 
   /** 지연 보정: 내 화면의 다른 플레이어는 이 서버 시각의 모습 */
@@ -546,6 +587,8 @@ export class OnlineMatch {
     this.hud.dispose();
     this.core.root.removeFromParent();
     this.barrier.removeFromParent();
+    this.floor.clear();
+    this.floor.group.removeFromParent();
     for (const r of this.remotes.values()) {
       r.dispose();
       const i = g.combat.targets.indexOf(r);

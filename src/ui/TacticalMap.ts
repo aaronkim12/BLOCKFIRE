@@ -67,7 +67,44 @@ export class TacticalMap {
     return !!this.req;
   }
 
+  /** M 키 지도: 보기만 하는 모드 (게임은 계속 조작 가능) */
+  private viewing = false;
+
+  get viewOpen(): boolean {
+    return this.viewing;
+  }
+
+  toggleView(): void {
+    if (this.req) return;
+    if (this.viewing) {
+      this.closeView();
+      return;
+    }
+    this.viewing = true;
+    this.root.hidden = false;
+    this.root.classList.add('view');
+    this.root.style.setProperty('--tm', '#9fe3ff');
+    this.root.querySelector('.tm-title')!.textContent = 'MAP';
+    this.root.querySelector('.tm-help')!.textContent = 'M: 닫기';
+    cancelAnimationFrame(this.raf);
+    const loop = () => {
+      if (!this.viewing) return;
+      this.drawView();
+      this.raf = requestAnimationFrame(loop);
+    };
+    loop();
+  }
+
+  closeView(): void {
+    if (!this.viewing) return;
+    this.viewing = false;
+    this.root.classList.remove('view');
+    this.root.hidden = true;
+    cancelAnimationFrame(this.raf);
+  }
+
   open(req: TargetRequest, onConfirm: (points: THREE.Vector3[]) => void): void {
+    this.closeView();
     this.req = req;
     this.onConfirm = onConfirm;
     this.points = [];
@@ -175,10 +212,10 @@ export class TacticalMap {
 
   // ───────────────────────── 그리기 ─────────────────────────
 
-  private draw(): void {
+  /** 지도 바탕 + 구역 + Core + 아군 + 드러난 적 + 나 */
+  private drawBase(): void {
     const g = this.ctx;
     const m = this.mapInfo;
-    const req = this.req!;
     const px = m.cs * m.scale;
     g.fillStyle = '#07090d';
     g.fillRect(0, 0, this.size, this.size);
@@ -202,15 +239,14 @@ export class TacticalMap {
       g.fillStyle = 'rgba(255,255,255,0.22)';
       g.fillText(id, u, v);
     }
-    // 사거리 원
     const me = this.game.player.position;
     const [mu, mv] = this.toMap(me);
-    g.strokeStyle = 'rgba(255,255,255,0.25)';
-    g.setLineDash([6, 6]);
-    g.beginPath();
-    g.arc(mu, mv, req.range * m.scale, 0, Math.PI * 2);
-    g.stroke();
-    g.setLineDash([]);
+    // 바닥에 떨어진 무기
+    for (const w of this.game.floorWeaponMarkers()) {
+      const [u, v] = this.toMap(w);
+      g.fillStyle = '#e8e2c8';
+      g.fillRect(u - 4, v - 2, 8, 4);
+    }
     // Core
     const core = this.game.match?.rm.core;
     if (core?.position && (core.status === 'planted' || core.status === 'dropped')) {
@@ -223,14 +259,16 @@ export class TacticalMap {
       g.lineTo(u - 7, v);
       g.fill();
     }
-    // 아군 / 드러난 적
-    for (const b of this.game.match ? this.game.bots?.allies ?? [] : []) {
-      if (!b.alive) continue;
-      const [u, v] = this.toMap(b.ctrl.position);
+    // 아군 (봇 대전의 아군 봇 / 온라인의 같은 팀) / 드러난 적
+    for (const a of this.game.allyMarkers()) {
+      const [u, v] = this.toMap(a.pos);
       g.fillStyle = '#4fa8ff';
       g.beginPath();
       g.arc(u, v, 5, 0, Math.PI * 2);
       g.fill();
+      g.fillStyle = 'rgba(200,225,255,0.85)';
+      g.font = '10px Consolas, monospace';
+      g.fillText(a.name, u, v - 11);
     }
     for (const t of this.game.abilityFx.revealed) {
       const [u, v] = this.toMap(t.center(new THREE.Vector3()));
@@ -253,6 +291,26 @@ export class TacticalMap {
     g.closePath();
     g.fill();
     g.restore();
+  }
+
+  /** M 키 지도 */
+  private drawView(): void {
+    this.drawBase();
+  }
+
+  /** 지점 지정 지도: 바탕 + 사거리 원 + 지정한 지점 */
+  private draw(): void {
+    this.drawBase();
+    const g = this.ctx;
+    const m = this.mapInfo;
+    const req = this.req!;
+    const [mu, mv] = this.toMap(this.game.player.position);
+    g.strokeStyle = 'rgba(255,255,255,0.25)';
+    g.setLineDash([6, 6]);
+    g.beginPath();
+    g.arc(mu, mv, req.range * m.scale, 0, Math.PI * 2);
+    g.stroke();
+    g.setLineDash([]);
 
     const color = req.color;
     const circle = (p: THREE.Vector3, alpha: number, ok = true) => {

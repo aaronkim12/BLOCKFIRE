@@ -96,6 +96,11 @@ export class Shop {
   }
 
   /** 이번 라운드에 산 상품 (환불 가능) */
+  /** 바닥에 버린 무기: 이번 구매 단계 환불 목록에서 뺀다 (버리고 환불받는 것 방지) */
+  forget(itemId: string): void {
+    this.purchases = this.purchases.filter((p) => p.item.id !== itemId);
+  }
+
   refundable(item: ShopItem): boolean {
     const m = this.game.match;
     if (m instanceof OnlineMatch) return m.refundable.includes(item.id);

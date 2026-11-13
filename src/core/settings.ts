@@ -25,7 +25,8 @@ export type Action =
   | 'ability1'
   | 'ability2'
   | 'signature'
-  | 'ultimate';
+  | 'ultimate'
+  | 'map';
 
 /** 액션 -> KeyboardEvent.code / 'Mouse0'(좌클릭) / 'Mouse2'(우클릭) / 'WheelUp' / 'WheelDown' */
 export type KeyBindings = Record<Action, string[]>;
@@ -59,6 +60,7 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   ability2: ['KeyZ'],
   signature: ['KeyF'],
   ultimate: ['KeyX'],
+  map: ['KeyM'],
 };
 
 export interface PSXSettings {

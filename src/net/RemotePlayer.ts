@@ -92,7 +92,11 @@ export class RemotePlayer implements Damageable {
   /** 순간이동 (스폰): 보간 없이 */
   snapTo(s: PlayerState, t: number): void {
     this.buffer = [{ t, s }];
+    this.dispYaw = null;
   }
+
+  /** 화면에 보이는 몸 방향 */
+  private dispYaw: number | null = null;
 
   update(dt: number, serverNow: number): void {
     const rt = serverNow - INTERP_DELAY;
@@ -122,7 +126,16 @@ export class RemotePlayer implements Damageable {
     this.ctrl.yaw = c.yaw;
     this.ctrl.pitch = c.pitch;
     this.model.root.position.set(c.p[0], c.p[1], c.p[2]);
-    this.model.root.rotation.y = c.yaw;
+    // 보이는 몸 방향은 초당 최대 30라디안까지만 돈다 (값이 튀어도 몸이 빙글 돌지 않게)
+    if (this.dispYaw === null) this.dispYaw = c.yaw;
+    else {
+      let d = c.yaw - this.dispYaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      const max = 30 * dt;
+      this.dispYaw += Math.max(-max, Math.min(max, d));
+    }
+    this.model.root.rotation.y = this.dispYaw;
     // 손에 든 무기
     if (c.weapon !== this.weaponId && c.weapon !== this.loadingWeapon) {
       this.loadingWeapon = c.weapon;
@@ -134,8 +147,8 @@ export class RemotePlayer implements Damageable {
       });
     }
     // 이동 속도를 캐릭터 기준으로 (오른쪽/앞)
-    const sin = Math.sin(c.yaw);
-    const cos = Math.cos(c.yaw);
+    const sin = Math.sin(this.dispYaw ?? c.yaw);
+    const cos = Math.cos(this.dispYaw ?? c.yaw);
     const p = this.pose;
     p.moveX = cos * c.v[0] - sin * c.v[1];
     p.moveZ = -sin * c.v[0] - cos * c.v[1];

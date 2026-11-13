@@ -222,7 +222,13 @@ export class ViewModel {
     // ── 위치/회전 조합
     const hip = new THREE.Vector3(...HIP[def.category]);
     // 정조준: 총의 가장 높은 부분(가늠자/조준기)이 화면 중앙 바로 아래에 오도록
-    const ads = new THREE.Vector3(0, -(t.bounds.max.y + 0.006), def.category === 'sidearm' ? -0.38 : -0.3);
+    // 조준: 눈을 조준경 쪽으로 더 가까이 (뷰모델 시야도 살짝 좁혀 총이 크게 보이게)
+    const ads = new THREE.Vector3(0, -(t.bounds.max.y + 0.006), def.category === 'sidearm' ? -0.33 : -0.25);
+    const vmFov = 64 / (1 + 0.22 * aim);
+    if (Math.abs(this.camera.fov - vmFov) > 0.01) {
+      this.camera.fov = vmFov;
+      this.camera.updateProjectionMatrix();
+    }
     const pos = hip.lerp(ads, aim);
     const rot = new THREE.Euler(0, 0, 0, 'YXZ');
     // 허리 사격 시 총을 살짝 안쪽으로 기울임
