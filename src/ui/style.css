@@ -2152,3 +2152,7 @@ body.drone-view .crosshair { opacity: 0.4; }
 .chat-mode.all { color: #e8e4da; }
 .chat-mode.team { color: #4fe0c0; }
 .chat-bar input { flex: 1; background: transparent; border: 0; outline: 0; color: #fff; font: inherit; }
+
+.me-canvas { position: relative; }
+.me-canvas .me-3d { position: absolute; inset: 0; cursor: crosshair; display: block; }
+.me-canvas canvas[hidden] { display: none !important; }

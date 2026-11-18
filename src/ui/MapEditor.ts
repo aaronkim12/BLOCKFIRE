@@ -6,6 +6,7 @@ import {
   type CustomMapData, type ThemeId,
 } from '../maps/custom';
 import { fromGallery, listGallery, publishMap, type GalleryItem } from '../maps/gallery';
+import { Editor3D } from './Editor3D';
 import { MERIDIAN } from '../maps/meridian';
 
 /**
@@ -50,6 +51,9 @@ export class MapEditor {
   private undo: string[][] = [];
   private checkTimer = 0;
   private open = false;
+  private e3d: Editor3D;
+  /** 작업 화면: 3D(기본) / 2D 격자 */
+  private view: '3d' | '2d' = '3d';
 
   constructor(container: HTMLElement, private game: Game) {
     this.root = document.createElement('div');
@@ -76,9 +80,13 @@ export class MapEditor {
         <button data-act="rect">사각형 채우기</button>
         <button data-act="mirror">좌우 대칭</button>
         <button data-act="undo">되돌리기 (Ctrl+Z)</button>
-        <p class="me-help">좌클릭: 칠하기 · 우클릭: 벽으로 지우기<br>가장자리는 항상 벽입니다.<br>좌우 대칭을 켜면 A↔B가 바뀌어 반대쪽에도 칠해집니다.</p>
+        <h4>화면</h4>
+        <div class="me-row"><button data-act="view3d">3D</button><button data-act="view2d">2D</button></div>
+        <button data-act="cutaway">벽 낮게 보기</button>
+        <div class="me-row"><button data-act="cam-iso">비스듬히</button><button data-act="cam-top">위에서</button></div>
+        <p class="me-help">좌클릭: 칠하기 · 우클릭: 벽으로 지우기<br><b>3D 카메라</b>: 휠 확대 · Space(또는 Alt)+드래그 회전 · Space+Shift+드래그 이동 · 가운데 버튼 드래그 회전<br>가장자리는 항상 벽입니다.<br>좌우 대칭을 켜면 A↔B가 바뀌어 반대쪽에도 칠해집니다.</p>
       </aside>
-      <main class="me-canvas"><canvas></canvas></main>
+      <main class="me-canvas"><canvas class="me-2d"></canvas></main>
       <aside class="me-side">
         <h4>공정성 검사</h4>
         <div class="me-verdict"></div>
@@ -98,7 +106,14 @@ export class MapEditor {
       </aside>
       <div class="me-modal" hidden><div class="me-modal-box"><header><b class="me-modal-title"></b><button data-act="modal-close">닫기</button></header><div class="me-modal-body"></div></div></div>`;
     container.appendChild(this.root);
-    this.canvas = this.root.querySelector('canvas')!;
+    this.canvas = this.root.querySelector('canvas.me-2d')!;
+    // 3D 화면 (기본): 게임과 같은 모습으로 보며 칠한다
+    this.e3d = new Editor3D(this.root.querySelector('.me-canvas')!);
+    this.e3d.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.e3d.canvas.addEventListener('mousedown', (e) => {
+      if (this.e3d.isViewGesture(e)) return;
+      this.onDown(e);
+    });
     this.ctx = this.canvas.getContext('2d')!;
     this.map = this.fromExample();
     this.loadGrid(this.map.layout);
@@ -127,7 +142,8 @@ export class MapEditor {
     this.open = true;
     this.root.hidden = false;
     this.syncFields();
-    this.refreshButtons();
+    this.applyView();
+    this.e3d.setMap(toDefinition(this.current()), true, true);
     requestAnimationFrame(() => this.draw());
     this.scheduleCheck(0);
   }
@@ -135,7 +151,23 @@ export class MapEditor {
   hide(): void {
     this.open = false;
     this.root.hidden = true;
+    this.e3d.stop();
     this.closeModal();
+  }
+
+  /** 3D / 2D 화면 전환 */
+  private applyView(): void {
+    const is3d = this.view === '3d';
+    this.canvas.hidden = is3d;
+    this.e3d.canvas.hidden = !is3d;
+    if (is3d && this.open) this.e3d.start();
+    else this.e3d.stop();
+    this.refreshButtons();
+  }
+
+  /** 3D 화면에 지금 맵 반영 */
+  private sync3d(fit = false): void {
+    this.e3d.setMap(toDefinition(this.current()), fit);
   }
 
   // ───────────────────────── 맵 데이터 ─────────────────────────
@@ -175,6 +207,9 @@ export class MapEditor {
     this.root.querySelectorAll<HTMLElement>('[data-brush]').forEach((b) => b.classList.toggle('active', Number(b.dataset.brush) === this.brush));
     this.root.querySelector('[data-act="rect"]')!.classList.toggle('active', this.rectMode);
     this.root.querySelector('[data-act="mirror"]')!.classList.toggle('active', this.mirror);
+    this.root.querySelector('[data-act="view3d"]')!.classList.toggle('active', this.view === '3d');
+    this.root.querySelector('[data-act="view2d"]')!.classList.toggle('active', this.view === '2d');
+    this.root.querySelector('[data-act="cutaway"]')!.classList.toggle('active', this.e3d.cutaway);
   }
 
   // ───────────────────────── 입력 ─────────────────────────
@@ -184,7 +219,10 @@ export class MapEditor {
     const f = t.dataset.f;
     if (f === 'name') this.map.name = t.value.trim().slice(0, 20) || 'MY MAP';
     if (f === 'author') this.map.author = t.value.trim().slice(0, 16);
-    if (f === 'theme') this.map.theme = t.value as ThemeId;
+    if (f === 'theme') {
+      this.map.theme = t.value as ThemeId;
+      this.sync3d();
+    }
   }
 
   private onClick(e: MouseEvent): void {
@@ -218,6 +256,23 @@ export class MapEditor {
       case 'undo':
         this.doUndo();
         break;
+      case 'view3d':
+      case 'view2d':
+        this.view = el.dataset.act === 'view3d' ? '3d' : '2d';
+        this.applyView();
+        if (this.view === '2d') this.draw();
+        break;
+      case 'cutaway':
+        this.e3d.cutaway = !this.e3d.cutaway;
+        this.e3d.setMap(toDefinition(this.current()), false, true);
+        this.refreshButtons();
+        break;
+      case 'cam-iso':
+        this.e3d.viewIso();
+        break;
+      case 'cam-top':
+        this.e3d.viewTop();
+        break;
       case 'resize':
         this.resize();
         break;
@@ -226,12 +281,14 @@ export class MapEditor {
         this.map = { id: newMapId(), name: 'MY MAP', author: this.map.author, theme: this.map.theme, layout: this.blank() };
         this.loadGrid(this.map.layout);
         this.after();
+        this.sync3d(true);
         break;
       case 'new-example':
         if (!confirm('지금 맵을 지우고 예시 맵에서 시작할까요?')) return;
         this.map = { ...this.fromExample(), author: this.map.author };
         this.loadGrid(this.map.layout);
         this.after();
+        this.sync3d(true);
         break;
       case 'test':
         this.testPlay();
@@ -273,6 +330,7 @@ export class MapEditor {
   }
 
   private cellAt(e: MouseEvent): [number, number] | null {
+    if (this.view === '3d') return this.e3d.pick(e);
     const r = this.canvas.getBoundingClientRect();
     const rows = this.grid.length;
     const cols = this.grid[0].length;
@@ -290,14 +348,20 @@ export class MapEditor {
     this.painting = e.button === 2 ? 2 : 1;
     if (this.rectMode) this.rectStart = cell;
     else this.paintAt(cell);
-    this.draw();
+    if (this.view === '3d') this.sync3d();
+    else this.draw();
   }
 
   private onMove(e: MouseEvent): void {
     if (!this.open) return;
     this.hover = this.cellAt(e);
-    if (this.painting && !this.rectMode && this.hover) this.paintAt(this.hover);
-    this.draw();
+    if (this.painting && !this.rectMode && this.hover) {
+      this.paintAt(this.hover);
+      if (this.view === '3d') this.sync3d();
+    }
+    if (this.view === '3d') {
+      this.e3d.setHover(this.hover, this.brush, this.mirror, this.rectMode && this.rectStart && this.hover ? [this.rectStart, this.hover] : undefined);
+    } else this.draw();
   }
 
   private onUp(): void {
@@ -358,6 +422,7 @@ export class MapEditor {
   private after(): void {
     this.syncFields();
     this.draw();
+    this.sync3d();
     this.scheduleCheck(250);
   }
 

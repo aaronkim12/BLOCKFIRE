@@ -855,6 +855,11 @@ export class Game {
       this.psx.renderer.shadowMap.needsUpdate = true;
     }
     this.scene.updateMatrixWorld();
+    // 맵 에디터가 열려 있으면 게임 화면은 그리지 않는다 (에디터 3D 화면만 — 저사양 기기 배려)
+    if (this.mapEditor?.isOpen) {
+      this.input.endFrame();
+      return;
+    }
     // 깊이 사전 패스: 입자가 있고 성능 모드가 아닐 때만. 안 그리는 프레임에는 부드러운 입자도 끈다 (연막이 사라지는 문제)
     const prepass = !this.lowSpec && fx.smoke.active + fx.glow.active > 0;
     fx.setSoftParticles(prepass);
