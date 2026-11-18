@@ -3,6 +3,7 @@ import { NetClient } from '../net/NetClient';
 import { TEAM_SIZE, type RoomInfo, type ServerMsg } from '../net/protocol';
 import type { TeamId } from '../rounds/RoundManager';
 import { mapOptions } from '../maps';
+import { getMap } from '../maps';
 import { MATCH_MODES, type MatchMode } from '../rounds/matchConfig';
 
 /**
@@ -40,6 +41,10 @@ export class OnlineLobby {
 
   hide(): void {
     this.root.hidden = true;
+  }
+
+  get playerName(): string {
+    return this.name;
   }
 
   private get name(): string {
@@ -96,9 +101,12 @@ export class OnlineLobby {
       case 'agent':
         this.net.send({ t: 'agent', agent: el.dataset.agent! });
         break;
-      case 'map':
-        this.net.send({ t: 'map', map: el.dataset.map! });
+      case 'map': {
+        const id = el.dataset.map!;
+        // 사용자 맵은 맵 정의를 함께 보낸다 (서버가 공정성 검사 후 모두에게 전달)
+        this.net.send({ t: 'map', map: id, def: id.startsWith('u:') ? getMap(id) : undefined });
         break;
+      }
       case 'mode':
         this.net.send({ t: 'mode', mode: el.dataset.mode as MatchMode });
         break;
@@ -121,7 +129,7 @@ export class OnlineLobby {
     if (m.t === 'start') {
       this.hide();
       this.game.agentSelect.hide();
-      this.game.startOnline(this.net, m.config, m.map);
+      this.game.startOnline(this.net, m.config, m.map, m.mapDef);
     }
     if (m.t === 'room') {
       // 방장이 시작 → 캐릭터 선택 화면
@@ -198,7 +206,7 @@ export class OnlineLobby {
           .map((m) => `<button data-act="mode" data-mode="${m}" class="${room.mode === m ? 'active' : ''}" ${me?.host ? '' : 'disabled'}><b>${MATCH_MODES[m].label}</b><small>${MATCH_MODES[m].desc}</small></button>`)
           .join('')}</div>
         <h3>맵</h3>
-        <div class="ol-modes ol-maps">${mapOptions()
+        <div class="ol-modes ol-maps">${room.mapName && !mapOptions().some((o) => o.id === room.map) ? `<button class="active" disabled><b>${escapeHtml(room.mapName)}</b><small>방장이 고른 사용자 맵 (공정성 검사 통과)</small></button>` : ''}${mapOptions()
           .map((o) => `<button data-act="map" data-map="${o.id}" class="${room.map === o.id ? 'active' : ''}" ${me?.host ? '' : 'disabled'}><b>${o.label}</b><small>${o.desc}</small></button>`)
           .join('')}</div>
         <p class="ol-hint">경기를 시작하면 캐릭터 선택 화면에서 캐릭터를 고릅니다 (같은 팀 중복 불가).</p>

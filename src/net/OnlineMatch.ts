@@ -132,6 +132,10 @@ export class OnlineMatch {
       case 'snap':
         this.applySnapshot(m);
         break;
+      case 'chat':
+        g.chat.add(m);
+        if (m.name !== this.net.room?.players.find((pl) => pl.id === this.myId)?.name) g.sound.play('ui', { gain: 0.35, pitch: 1.6 });
+        break;
       case 'knock':
         g.local.knock(m.vy);
         break;

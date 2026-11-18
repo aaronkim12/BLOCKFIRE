@@ -44,6 +44,8 @@ export interface RoomInfo {
   mode: import('../rounds/matchConfig').MatchMode;
   /** 방장이 고른 맵 (맵 id 또는 'random') */
   map: string;
+  /** 사용자 맵이면 그 이름 (다른 사람 목록에는 없으므로) */
+  mapName?: string;
   players: LobbyPlayer[];
   inMatch: boolean;
 }
@@ -133,8 +135,10 @@ export type ClientMsg =
   | { t: 'start' }
   /** 방장: 경기 방식 */
   | { t: 'mode'; mode: import('../rounds/matchConfig').MatchMode }
-  /** 방장: 맵 (맵 id 또는 'random') */
-  | { t: 'map'; map: string }
+  /** 방장: 맵 (맵 id 또는 'random'). 사용자 맵이면 맵 정의도 보낸다 (서버가 공정성 검사) */
+  | { t: 'map'; map: string; def?: import('../maps/MapData').MapDefinition }
+  /** 채팅 (team: 우리 팀에게만) */
+  | { t: 'chat'; text: string; team: boolean }
   | { t: 'state'; s: PlayerState }
   /** 사격: 서버 시각 at 기준으로 되감아 판정 (지연 보정) */
   | { t: 'fire'; weapon: string; eye: V3; dirs: V3[]; at: number }
@@ -155,7 +159,9 @@ export type ServerMsg =
   | { t: 'welcome'; id: string }
   | { t: 'room'; room: RoomInfo | null }
   | { t: 'error'; msg: string }
-  | { t: 'start'; you: string; config: import('../rounds/matchConfig').MatchConfig; /** 이번 경기 맵 id (무작위면 서버가 뽑은 맵) */ map: string }
+  | { t: 'start'; you: string; config: import('../rounds/matchConfig').MatchConfig; /** 이번 경기 맵 id (무작위면 서버가 뽑은 맵) */ map: string; /** 사용자 맵이면 맵 정의 */ mapDef?: import('../maps/MapData').MapDefinition }
+  /** 채팅 */
+  | { t: 'chat'; name: string; team: TeamId; text: string; teamOnly: boolean }
   | { t: 'snap'; time: number; players: NetPlayer[]; round: RoundSnap; you: SelfSnap; /** 바닥에 떨어진 무기 */ floor?: FloorItem[] }
   /** 내 위치를 서버가 정함 (라운드 시작 스폰, 이동 검사 실패) */
   | { t: 'teleport'; p: V3; yaw: number; seq: number }

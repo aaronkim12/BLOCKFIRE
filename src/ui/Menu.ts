@@ -60,7 +60,7 @@ export class Menu {
           <button data-act="play">PLAY <small>온라인 5대5</small></button>
           <button data-act="match" class="primary">MATCH <small>5대5 · 봇 대전</small></button>
           <button data-act="practice">PRACTICE</button>
-          <button data-act="collection" disabled title="Phase 6 이후 구현 예정">COLLECTION <small>준비 중</small></button>
+          <button data-act="editor">MAP EDITOR <small>맵 만들기 · 공유</small></button>
           <button data-act="settings">SETTINGS</button>
         </nav>
         <a class="feedback-link" href="https://forms.gle/xcjLgypmjX18rDAN7" target="_blank" rel="noopener noreferrer">💬 추가했으면 하는 기능 알려주기 <small>설문 참여</small></a>
@@ -187,6 +187,10 @@ export class Menu {
         g.onlineLobby.show(() => {
           if (g.state === 'menu') this.root.hidden = false;
         });
+        break;
+      case 'editor':
+        this.root.hidden = true;
+        g.openMapEditor();
         break;
       case 'practice':
         this.root.hidden = true;

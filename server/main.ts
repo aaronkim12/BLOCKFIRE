@@ -5,6 +5,9 @@ import { DEFAULT_MATCH, MATCH_MODES, withMode, type MatchConfig, type MatchMode 
 import type { TeamId } from '../src/rounds/RoundManager';
 import { ServerMatch } from './ServerMatch';
 import { MAPS, RANDOM_MAP, resolveMap } from '../src/maps';
+import { analyzeMap } from '../src/maps/fairness';
+import { CUSTOM_PREFIX, toDefinition, type ThemeId } from '../src/maps/custom';
+import type { MapDefinition } from '../src/maps/MapData';
 import { createStaticServer } from './static';
 
 /**
@@ -22,6 +25,8 @@ interface Client {
   room: Room | null;
   /** 브라우저 고유 값 (다시 들어올 때 본인 확인) */
   token: string;
+  /** 마지막 채팅 시각 (도배 방지) */
+  lastChat?: number;
 }
 
 class Room {
@@ -39,6 +44,8 @@ class Room {
   map: string = RANDOM_MAP;
   /** 지난 경기 맵 (무작위일 때 연속으로 같은 맵이 나오지 않게) */
   lastMap = '';
+  /** 방장이 고른 사용자 맵 (서버가 공정성 검사를 통과시킨 것) */
+  customDef: MapDefinition | null = null;
   /** 대기실 → 캐릭터 선택 → 경기 */
   selecting = false;
   /** 캐릭터 선택 마감 시각 (ms) */
@@ -55,7 +62,7 @@ class Room {
 
   info(): RoomInfo {
     const selectLeft = this.selecting ? Math.max(0, Math.ceil((this.selectEnds - Date.now()) / 1000)) : 0;
-    return { code: this.code, phase: this.phase, selectLeft, mode: this.mode, map: this.map, players: this.players, inMatch: !!this.match };
+    return { code: this.code, phase: this.phase, selectLeft, mode: this.mode, map: this.map, mapName: this.customDef && this.map === this.customDef.id ? this.customDef.name : undefined, players: this.players, inMatch: !!this.match };
   }
 
   broadcast(msg: ServerMsg): void {
@@ -132,7 +139,7 @@ function rejoinMatch(c: Client, room: Room, p: LobbyPlayer): void {
   room.tokens.set(p.id, c.token);
   send(c, { t: 'welcome', id: p.id });
   room.sendRoom();
-  send(c, { t: 'start', you: p.id, config: room.config, map: room.lastMap });
+  send(c, { t: 'start', you: p.id, config: room.config, map: room.lastMap, mapDef: room.customDef && room.lastMap === room.customDef.id ? room.customDef : undefined });
   room.match?.rejoin(p.id);
 }
 
@@ -199,6 +206,17 @@ function handle(c: Client, m: ClientMsg): void {
       return;
   }
   if (!room || !me) return;
+  if (m.t === 'chat') {
+    // 채팅: 0.6초에 한 번, 120자까지, 제어 문자 제거. team이면 같은 팀에게만
+    const now = Date.now();
+    if (now - (c.lastChat ?? 0) < 600) return;
+    c.lastChat = now;
+    const text = String(m.text ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 120);
+    if (!text) return;
+    const msg: ServerMsg = { t: 'chat', name: me.name, team: me.team, text, teamOnly: !!m.team };
+    for (const p of room.players) if (!p.away && (!m.team || p.team === me.team)) send(clients.get(p.id), msg);
+    return;
+  }
   if (room.match) {
     room.match.handle(c.id, m);
     return;
@@ -234,11 +252,24 @@ function handle(c: Client, m: ClientMsg): void {
       room.mode = m.mode;
       room.sendRoom();
       return;
-    case 'map':
-      if (room.selecting || !me.host || (m.map !== RANDOM_MAP && !MAPS.some((d) => d.id === m.map))) return;
+    case 'map': {
+      if (room.selecting || !me.host) return;
+      if (typeof m.map === 'string' && m.map.startsWith(CUSTOM_PREFIX)) {
+        // 사용자 맵: 서버가 맵을 다시 만들어(크기·높이·분위기 고정) 공정성 검사를 통과해야만 쓸 수 있다
+        const def = sanitizeCustom(m.map, m.def);
+        if (!def) return send(c, { t: 'error', msg: '맵 정보를 읽을 수 없습니다' });
+        const report = analyzeMap(def);
+        if (report.errors.length) return send(c, { t: 'error', msg: `이 맵은 공정성 검사를 통과하지 못했습니다: ${report.errors[0]}` });
+        room.customDef = def;
+        room.map = def.id;
+        room.sendRoom();
+        return;
+      }
+      if (m.map !== RANDOM_MAP && !MAPS.some((d) => d.id === m.map)) return;
       room.map = m.map;
       room.sendRoom();
       return;
+    }
     case 'start':
       if (!me.host || room.selecting) return;
       // 캐릭터 선택 단계로
@@ -267,7 +298,7 @@ function checkSelect(room: Room): void {
 }
 
 function startMatch(room: Room): void {
-  const mapDef = resolveMap(room.map, room.lastMap);
+  const mapDef = room.customDef && room.map === room.customDef.id ? room.customDef : resolveMap(room.map, room.lastMap);
   room.lastMap = mapDef.id;
   const match = new ServerMatch(room.players, (id, msg) => {
     if (id === null) room.broadcast(msg);
@@ -275,7 +306,8 @@ function startMatch(room: Room): void {
   }, room.config, mapDef);
   room.match = match;
   room.time = 0;
-  for (const p of room.players) send(clients.get(p.id), { t: 'start', you: p.id, config: room.config, map: mapDef.id });
+  const custom = mapDef.id.startsWith(CUSTOM_PREFIX) ? mapDef : undefined;
+  for (const p of room.players) send(clients.get(p.id), { t: 'start', you: p.id, config: room.config, map: mapDef.id, mapDef: custom });
   room.sendRoom();
   match.start();
 }
@@ -342,4 +374,14 @@ console.log(`[BLOCKFIRE] server listening on http://0.0.0.0:${port} (WebSocket �
 // 테스트용: 짧은 경기 설정 (환경 변수 FAST=1)
 if (process.env.FAST) {
   Object.assign(DEFAULT_MATCH, { waitTime: 0.5, buyTime: 10, roundStartTime: 0.5, roundTime: 60, coreTime: 25, roundEndTime: 3, roundsPerHalf: 2, winRounds: 3 });
+}
+
+/** 클라이언트가 보낸 사용자 맵에서 격자·이름만 받아 서버가 정의를 다시 만든다 (높이·크기 등은 고정값) */
+function sanitizeCustom(id: string, def: MapDefinition | undefined): MapDefinition | null {
+  if (!def || !Array.isArray(def.layout) || def.layout.length > 48 || !def.layout.every((r) => typeof r === 'string' && r.length <= 48)) return null;
+  const sky = def.environment?.skyTop;
+  const theme: ThemeId = sky === 0x1c2a4a ? 'dusk' : sky === 0x2b1d3f ? 'violet' : 'sunset';
+  const blurb = typeof def.blurb === 'string' ? def.blurb : '';
+  const author = blurb.endsWith('님의 맵') ? blurb.slice(0, -5) : '';
+  return toDefinition({ id: id.slice(0, 32), name: String(def.name ?? 'CUSTOM').slice(0, 20), author, theme, layout: def.layout });
 }

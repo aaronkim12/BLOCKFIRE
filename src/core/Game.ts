@@ -27,13 +27,13 @@ import { DEFAULT_MATCH, type MatchConfig } from '../rounds/matchConfig';
 import { MatchController } from '../rounds/MatchController';
 import { MapBuilder, type BuiltMap } from '../maps/MapBuilder';
 import type { MapDefinition } from '../maps/MapData';
-import { getMap, MAPS, RANDOM_MAP, resolveMap } from '../maps';
+import { getMap, MAPS, RANDOM_MAP, registerCustomMap, resolveMap } from '../maps';
 
 /** 지난번에 고른 맵 (없거나 사라진 맵이면 null) */
 function savedMapChoice(): string | null {
   try {
     const v = localStorage.getItem('blockfire.map');
-    return v && (v === RANDOM_MAP || MAPS.some((m) => m.id === v)) ? v : null;
+    return v && (v === RANDOM_MAP || v.startsWith('u:') || MAPS.some((m) => m.id === v)) ? v : null;
   } catch {
     return null;
   }
@@ -50,6 +50,9 @@ import { WeaponInventory, type WeaponControls } from '../weapons/WeaponInventory
 import { loadWeaponTemplate } from '../weapons/WeaponModels';
 import { CAMERA, PHYSICS, PLAYER_SHAPE } from './config';
 import { Input } from './Input';
+import { MapEditor } from '../ui/MapEditor';
+import { ChatBox } from '../ui/ChatBox';
+import { checkCustom, loadMyMaps, toDefinition } from '../maps/custom';
 import { loadSettings, saveSettings, type Settings } from './settings';
 
 export type GameState = 'loading' | 'menu' | 'playing' | 'paused';
@@ -130,6 +133,10 @@ export class Game {
   dashKick = 0;
   /** 전술 지도 (지점 지정 능력) */
   tacMap!: TacticalMap;
+  /** 맵 에디터 */
+  mapEditor!: MapEditor;
+  /** 온라인 채팅 */
+  chat!: ChatBox;
   /** 마지막 처치 시각 (흡수 능력) */
   private lastKillAt = -1e9;
   /** 투척 단검 궁극기 중 */
@@ -327,6 +334,13 @@ export class Game {
     this.agentSelect = new AgentSelect(container, this);
     this.onlineLobby = new OnlineLobby(container, this);
     this.tacMap = new TacticalMap(container, this);
+    this.mapEditor = new MapEditor(container, this);
+    this.chat = new ChatBox(container, this);
+    // 내 맵: 공정성 검사를 통과한 것만 맵 선택 목록에
+    for (const m of loadMyMaps()) {
+      const def = toDefinition(m);
+      registerCustomMap(def, checkCustom(def).errors.length === 0);
+    }
 
     window.addEventListener('resize', this.onResize);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
@@ -474,10 +488,11 @@ export class Game {
   }
 
   /** 온라인 경기 시작 (서버가 start를 보냈을 때) */
-  startOnline(net: NetClient, config: import('../rounds/matchConfig').MatchConfig, mapId?: string): void {
+  startOnline(net: NetClient, config: import('../rounds/matchConfig').MatchConfig, mapId?: string, mapDef?: MapDefinition): void {
     if (this.state === 'loading') return;
     this.endMatch();
-    // 맵은 서버가 정한다
+    // 맵은 서버가 정한다 (사용자 맵이면 서버가 검사를 마친 맵 정의를 보내 줌)
+    if (mapDef) registerCustomMap(mapDef, false);
     this.setMap(getMap(mapId ?? 'foundry'));
     this.net = net;
     this.mode = 'online';
@@ -689,6 +704,22 @@ export class Game {
     this.psx.resize();
   };
 
+  /** 맵 에디터 열기 / 닫기 (메뉴에서) */
+  openMapEditor(): void {
+    if (this.state !== 'menu') return;
+    this.mapEditor.show();
+  }
+
+  closeMapEditor(): void {
+    this.setState('menu');
+  }
+
+  /** 에디터의 시험 플레이: 이 맵으로 연습 모드 */
+  testCustomMap(id: string): void {
+    this.mapChoice = id;
+    this.startPractice();
+  }
+
   /** 마우스를 잠근다. 브라우저가 거부하면 일시정지 화면으로 (화면을 클릭하면 다시 시도) */
   lockPointer(): void {
     if (this.input.forceActive) return;
@@ -772,6 +803,7 @@ export class Game {
     this.lastTime = now;
     this.trackFps(dt);
     this.updatePerformance(dt);
+    this.chat.setVisible(this.mode === 'online' && (this.state === 'playing' || this.state === 'paused'));
     // 안전장치: 진행 중인데 마우스 잠금이 0.4초 넘게 풀려 있으면 일시정지 화면으로 (키가 안 먹는 상태로 남지 않게)
     if (this.state === 'playing' && !this.input.forceActive && !this.input.locked && !this.pointerUiOpen()) {
       this.unlockedTime += dt;
@@ -823,12 +855,15 @@ export class Game {
       this.psx.renderer.shadowMap.needsUpdate = true;
     }
     this.scene.updateMatrixWorld();
+    // 깊이 사전 패스: 입자가 있고 성능 모드가 아닐 때만. 안 그리는 프레임에는 부드러운 입자도 끈다 (연막이 사라지는 문제)
+    const prepass = !this.lowSpec && fx.smoke.active + fx.glow.active > 0;
+    fx.setSoftParticles(prepass);
     this.psx.render(
       this.scene,
       this.camera,
       showViewModel ? this.viewModel : undefined,
       // 성능 모드에서는 입자용 깊이 사전 패스(장면을 한 번 더 그림)를 생략
-      !this.lowSpec && fx.smoke.active + fx.glow.active > 0 ? { hide: [fx.group, this.abilityFx.group] } : undefined,
+      prepass ? { hide: [fx.group, this.abilityFx.group] } : undefined,
     );
 
     if (this.state === 'playing' || this.state === 'paused') this.hud.update(this, this.averageFps());

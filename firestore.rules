@@ -1,0 +1,18 @@
+rules_version = '2';
+// 맵 게시판: 누구나 읽고 새 맵을 올릴 수 있다. 수정·삭제는 불가. 크기 제한.
+// (게임은 게시판의 맵도 쓰기 전에 공정성 검사를 다시 하므로 잘못된 맵은 게임에 나오지 않는다)
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /maps/{id} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['name', 'author', 'code', 'cols', 'rows', 'createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 20
+        && request.resource.data.author is string && request.resource.data.author.size() <= 16
+        && request.resource.data.code is string && request.resource.data.code.size() <= 8000
+        && request.resource.data.cols is int && request.resource.data.cols >= 16 && request.resource.data.cols <= 48
+        && request.resource.data.rows is int && request.resource.data.rows >= 16 && request.resource.data.rows <= 48
+        && request.resource.data.createdAt is timestamp;
+      allow update, delete: if false;
+    }
+  }
+}

@@ -152,6 +152,14 @@ export class Vfx {
     sceneDepth.on.value = 1;
   }
 
+  /**
+   * 부드러운 입자(벽·바닥과 만나는 곳을 흐림) 켜기/끄기.
+   * 깊이 사전 패스를 그리지 않는 프레임(성능 모드)에 켜 두면 지난 깊이로 계산돼 연막이 통째로 투명해진다.
+   */
+  setSoftParticles(on: boolean): void {
+    sceneDepth.on.value = on ? 1 : 0;
+  }
+
   update(dt: number, camera: THREE.Camera): void {
     this.camera = camera;
     const pc = camera as THREE.PerspectiveCamera;
